@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Main where
 
@@ -6,21 +7,26 @@ import           Data.List             ((!!))
 import           Data.Maybe            (fromJust)
 import           Mockable              (Production)
 import           Node                  (hoistSendActions)
-import           Serokell.Util         (sec)
 import           System.Wlog           (LoggerName, logInfo)
 import           Universum
 
+import qualified Data.ByteString.Char8 as BS8 (unpack)
 import           Pos.Binary            ()
 import qualified Pos.CLI               as CLI
-import           Pos.Communication     (ActionSpec (..), OutSpecs, WorkerSpec, worker)
-import           Pos.Constants         (isDevelopment, staticSysStart)
+import           Pos.Communication     (ActionSpec (..), OutSpecs, WorkerSpec, worker,
+                                        wrapActionSpec)
+import           Pos.Constants         (isDevelopment)
 import           Pos.Crypto            (SecretKey, VssKeyPair, keyGen, vssKeyGen)
+import           Pos.DHT.Real          (KademliaParams (..), KademliaDHTInstance (..),
+                                        foreverRejoinNetwork, readDhtPeersFile)
+import           Pos.DHT.Workers       (dhtWorkers)
 import           Pos.Genesis           (genesisDevSecretKeys, genesisStakeDistribution,
                                         genesisUtxo)
 import           Pos.Launcher          (BaseParams (..), LoggingParams (..),
                                         NodeParams (..), RealModeResources,
-                                        bracketResources, runNodeProduction, runNodeStats,
-                                        runTimeLordReal, runTimeSlaveReal, stakesDistr)
+                                        bracketResourcesKademlia, runNodeProduction,
+                                        runNodeStats, stakesDistr, hoistResources,
+                                        rmGetPeers)
 import           Pos.Shutdown          (triggerShutdown)
 import           Pos.Ssc.Class         (SscConstraint)
 import           Pos.Ssc.GodTossing    (GtParams (..), SscGodTossing,
@@ -28,7 +34,7 @@ import           Pos.Ssc.GodTossing    (GtParams (..), SscGodTossing,
 import           Pos.Ssc.NistBeacon    (SscNistBeacon)
 import           Pos.Ssc.SscAlgo       (SscAlgo (..))
 import           Pos.Statistics        (getNoStatsT, getStatsMap, runStatsT')
-import           Pos.Types             (Timestamp (Timestamp))
+import           Pos.Types             (Timestamp)
 import           Pos.Update.Context    (ucUpdateSemaphore)
 import           Pos.Update.Params     (UpdateParams (..))
 import           Pos.Util              (inAssertMode, mappendPair)
@@ -46,23 +52,7 @@ import           Pos.Wallet.Web        (walletServeWebFull, walletServerOuts)
 import           Pos.Util.Context      (askContext)
 
 import           NodeOptions           (Args (..), getNodeOptions)
-
-getSystemStart
-    :: SscConstraint ssc
-    => Proxy ssc -> RealModeResources -> Args -> Production Timestamp
-getSystemStart sscProxy inst args
-    | noSystemStart args > 0 = pure $ Timestamp $ sec $ noSystemStart args
-    | otherwise =
-        case staticSysStart of
-            Nothing ->
-                if timeLord args
-                    then runTimeLordReal (loggingParams "time-lord" args)
-                    else do params <- liftIO $ baseParams "time-slave" args
-                            runTimeSlaveReal
-                                sscProxy
-                                inst
-                                params
-            Just systemStart -> return systemStart
+import qualified Network.Transport.TCP as TCP (TCPAddr (..), TCPAddrInfo (..))
 
 loggingParams :: LoggerName -> Args -> LoggingParams
 loggingParams tag Args{..} =
@@ -73,25 +63,31 @@ loggingParams tag Args{..} =
     , lpEkgPort = monitorPort
     }
 
-baseParams :: LoggerName -> Args -> IO BaseParams
-baseParams loggingTag args@Args {..} = do
-    filePeers <- maybe (return []) CLI.readPeersFile
-                     (CLI.dhtPeersFile commonArgs)
-    let allPeers = CLI.dhtPeers commonArgs ++ filePeers
-    return $ BaseParams
-        { bpLoggingParams = loggingParams loggingTag args
-        , bpIpPort = Just ipPort
-        , bpDHTPeers = allPeers
-        , bpDHTKey = dhtKey
-        , bpDHTExplicitInitial = CLI.dhtExplicitInitial commonArgs
-        , bpKademliaDump = kademliaDumpPath
-        }
+-- | Load up the KademliaParams. It's in IO because we may have to read a
+--   file to find some peers.
+getKademliaParams :: Args -> IO KademliaParams
+getKademliaParams Args {..} = do
+    filePeers <- maybe (return []) readDhtPeersFile dhtPeersFile
+    let allPeers = dhtPeersList ++ filePeers
+    return $ KademliaParams
+                 { kpIpPort = dhtNetworkAddress
+                 , kpPeers = allPeers
+                 , kpKey = dhtKey
+                 , kpExplicitInitial = dhtExplicitInitial
+                 , kpDump = kademliaDumpPath
+                 }
 
-action :: Args -> RealModeResources -> Production ()
-action args@Args {..} res = do
-    systemStart <- case CLI.sscAlgo commonArgs of
-                       GodTossingAlgo -> getSystemStart (Proxy :: Proxy SscGodTossing) res args
-                       NistBeaconAlgo -> getSystemStart (Proxy :: Proxy SscNistBeacon) res args
+getBaseParams :: LoggerName -> Args -> BaseParams
+getBaseParams loggingTag args@Args {..} =
+    BaseParams { bpLoggingParams = loggingParams loggingTag args }
+
+action
+    :: KademliaDHTInstance
+    -> Args
+    -> (forall ssc . RealModeResources (RawRealMode ssc))
+    -> Production ()
+action kademliaInst args@Args {..} res = do
+    let systemStart = CLI.sysStart commonArgs
     currentParams <- getNodeParams args systemStart
     let vssSK = fromJust $ npUserSecret currentParams ^. usVss
         gtParams = gtSscParams args vssSK
@@ -109,21 +105,54 @@ action args@Args {..} res = do
     putText $ "Running using " <> show (CLI.sscAlgo commonArgs)
     putText $ "If stats is on: " <> show enableStats
     case (enableStats, CLI.sscAlgo commonArgs) of
-        (True, GodTossingAlgo) ->
-            runNodeStats @SscGodTossing res
-                (convPlugins currentPluginsGT `mappendPair` walletStats args)
+               
+        (True, GodTossingAlgo) -> do
+            let wrappedDhtWorkers :: ([WorkerSpec (StatsMode SscGodTossing)], OutSpecs)
+                wrappedDhtWorkers = first (map $ wrapActionSpec $ "worker" <> "dht") (dhtWorkers kademliaInst)
+                allPlugins :: ([WorkerSpec (StatsMode SscGodTossing)], OutSpecs)
+                allPlugins = wrappedDhtWorkers `mappendPair` convPlugins currentPluginsGT `mappendPair` walletStats args res
+                res' :: RealModeResources (StatsMode SscGodTossing)
+                res' = hoistResources lift res
+            runNodeStats @SscGodTossing
+                (CLI.peerId commonArgs)
+                res'
+                allPlugins
                 currentParams gtParams
-        (True, NistBeaconAlgo) ->
-            runNodeStats @SscNistBeacon res
-                (convPlugins currentPlugins `mappendPair`  walletStats args)
+        (True, NistBeaconAlgo) -> do
+            let wrappedDhtWorkers :: ([WorkerSpec (StatsMode SscNistBeacon)], OutSpecs)
+                wrappedDhtWorkers = first (map $ wrapActionSpec $ "worker" <> "dht") (dhtWorkers kademliaInst)
+                allPlugins :: ([WorkerSpec (StatsMode SscNistBeacon)], OutSpecs)
+                allPlugins = wrappedDhtWorkers `mappendPair` convPlugins currentPlugins `mappendPair` walletStats args res
+                res' :: RealModeResources (StatsMode SscNistBeacon)
+                res' = hoistResources lift res
+            runNodeStats @SscNistBeacon
+                (CLI.peerId commonArgs)
+                res'
+                allPlugins
                 currentParams ()
-        (False, GodTossingAlgo) ->
-            runNodeProduction @SscGodTossing res
-                (convPlugins currentPluginsGT `mappendPair` walletProd args)
+        (False, GodTossingAlgo) -> do
+            let wrappedDhtWorkers :: ([WorkerSpec (ProductionMode SscGodTossing)], OutSpecs)
+                wrappedDhtWorkers = first (map $ wrapActionSpec $ "worker" <> "dht") (dhtWorkers kademliaInst)
+                allPlugins :: ([WorkerSpec (ProductionMode SscGodTossing)], OutSpecs)
+                allPlugins = wrappedDhtWorkers `mappendPair` convPlugins currentPluginsGT `mappendPair` walletProd args res
+                res' :: RealModeResources (ProductionMode SscGodTossing)
+                res' = hoistResources lift res
+            runNodeProduction @SscGodTossing
+                (CLI.peerId commonArgs)
+                res'
+                allPlugins
                 currentParams gtParams
-        (False, NistBeaconAlgo) ->
-            runNodeProduction @SscNistBeacon res
-                (convPlugins currentPlugins `mappendPair` walletProd args)
+        (False, NistBeaconAlgo) -> do
+            let wrappedDhtWorkers :: ([WorkerSpec (ProductionMode SscNistBeacon)], OutSpecs)
+                wrappedDhtWorkers = first (map $ wrapActionSpec $ "worker" <> "dht") (dhtWorkers kademliaInst)
+                allPlugins :: ([WorkerSpec (ProductionMode SscNistBeacon)], OutSpecs)
+                allPlugins = wrappedDhtWorkers `mappendPair` convPlugins currentPlugins `mappendPair` walletProd args res
+                res' :: RealModeResources (ProductionMode SscNistBeacon)
+                res' = hoistResources lift res
+            runNodeProduction @SscNistBeacon
+                (CLI.peerId commonArgs) 
+                res'
+                allPlugins
                 currentParams ()
   where
     convPlugins = (,mempty) . map (\act -> ActionSpec $ \__vI __sA -> act)
@@ -192,21 +221,19 @@ getNodeParams args@Args {..} systemStart = do
         userSecretWithGenesisKey args =<<
         updateUserSecretVSS args =<<
         peekUserSecret (getKeyfilePath args)
-    params <- liftIO $ baseParams "node" args
     return NodeParams
         { npDbPathM = dbPath
         , npRebuildDb = rebuildDB
         , npSecretKey = primarySK
         , npUserSecret = userSecret
         , npSystemStart = systemStart
-        , npBaseParams = params
+        , npBaseParams = getBaseParams "node" args
         , npCustomUtxo = genesisUtxo $
               if isDevelopment
                   then stakesDistr (CLI.flatDistr commonArgs)
                                    (CLI.bitcoinDistr commonArgs)
                                    (CLI.expDistr commonArgs)
                   else genesisStakeDistribution
-        , npTimeLord = timeLord
         , npJLFile = jlPath
         , npAttackTypes = maliciousEmulationAttacks
         , npAttackTargets = maliciousEmulationTargets
@@ -251,13 +278,18 @@ updateTriggerWorker = first pure $ worker mempty $ \_ -> do
 walletServe
     :: SscConstraint ssc
     => Args
+    -> RealModeResources (RawRealMode ssc)
     -> ([WorkerSpec (RawRealMode ssc)], OutSpecs)
 #if defined WITH_WEB && defined WITH_WALLET
-walletServe Args {..} =
+walletServe Args {..} res =
     if enableWallet
     then first pure $ worker walletServerOuts $ \sendActions ->
-            walletServeWebFull sendActions walletDebug walletDbPath
-                                           walletRebuildDb walletPort
+            walletServeWebFull
+                (rmGetPeers res)
+                sendActions
+                walletDebug
+                walletDbPath
+                walletRebuildDb walletPort
     else updateTriggerWorker
 #else
 walletServe _ = updateTriggerWorker
@@ -266,8 +298,9 @@ walletServe _ = updateTriggerWorker
 walletProd
     :: SscConstraint ssc
     => Args
+    -> RealModeResources (RawRealMode ssc)
     -> ([WorkerSpec (ProductionMode ssc)], OutSpecs)
-walletProd = first (map liftPlugin) . walletServe
+walletProd args res = first (map liftPlugin) (walletServe args res)
   where
     liftPlugin (ActionSpec p) = ActionSpec $ \vI sa ->
         lift . p vI $ hoistSendActions getNoStatsT lift sa
@@ -275,8 +308,9 @@ walletProd = first (map liftPlugin) . walletServe
 walletStats
     :: SscConstraint ssc
     => Args
+    -> RealModeResources (RawRealMode ssc)
     -> ([WorkerSpec (StatsMode ssc)], OutSpecs)
-walletStats = first (map liftPlugin) . walletServe
+walletStats args res = first (map liftPlugin) (walletServe args res)
   where
     liftPlugin (ActionSpec p) = ActionSpec $ \vI sa -> do
         s <- getStatsMap
@@ -299,5 +333,15 @@ main :: IO ()
 main = do
     printFlags
     args <- getNodeOptions
-    params <- baseParams "node" args
-    bracketResources params (action args)
+    let baseParams = getBaseParams "node" args
+    let (bindHost, bindPort) = bindAddress args
+    let (externalHost, externalPort) = externalAddress args
+    let tcpAddr = TCP.Addressable $
+            TCP.TCPAddrInfo (BS8.unpack bindHost) (show $ bindPort)
+                            (const (BS8.unpack externalHost, show $ externalPort))
+    kademliaParams <- liftIO $ getKademliaParams args
+    bracketResourcesKademlia baseParams tcpAddr kademliaParams $ \kademliaInstance res ->
+        let trans :: forall ssc t . Production t -> RawRealMode ssc t
+            trans = lift . lift . lift . lift . lift . lift . lift . lift . lift
+            res' = hoistResources trans res
+        in  foreverRejoinNetwork kademliaInstance (action kademliaInstance args res')

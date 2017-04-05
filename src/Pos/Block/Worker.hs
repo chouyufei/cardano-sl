@@ -22,7 +22,7 @@ import           Pos.Block.Logic             (createGenesisBlock, createMainBloc
 import           Pos.Block.Network.Announce  (announceBlock, announceBlockOuts)
 import           Pos.Block.Network.Retrieval (retrievalWorker)
 import           Pos.Communication.Protocol  (OutSpecs, SendActions, Worker', WorkerSpec,
-                                              onNewSlotWorker)
+                                              onNewSlotWorker, NodeId)
 import           Pos.Constants               (networkDiameter)
 import           Pos.Context                 (getNodeContext, ncPublicKey)
 import           Pos.Core.Address            (addressHash)
@@ -53,23 +53,26 @@ import           Pos.WorkMode                (WorkMode)
 
 
 -- | All workers specific to block processing.
-blkWorkers :: (SscWorkersClass ssc, WorkMode ssc m) => ([WorkerSpec m], OutSpecs)
-blkWorkers =
-    merge $ [ blkOnNewSlot
-            , retrievalWorker ]
+blkWorkers
+    :: (SscWorkersClass ssc, WorkMode ssc m)
+    => m (Set NodeId)
+    -> ([WorkerSpec m], OutSpecs)
+blkWorkers getPeers =
+    merge $ [ blkOnNewSlot getPeers
+            , retrievalWorker getPeers ]
 #if defined(WITH_WALLET)
-            ++ [ behindNatWorker | not isDevelopment ]
+            ++ [ behindNatWorker getPeers | not isDevelopment ]
 #endif
   where
     merge = mconcatPair . map (first pure)
 
 -- Action which should be done when new slot starts.
-blkOnNewSlot :: WorkMode ssc m => (WorkerSpec m, OutSpecs)
-blkOnNewSlot = onNewSlotWorker True announceBlockOuts blkOnNewSlotImpl
+blkOnNewSlot :: WorkMode ssc m => m (Set NodeId) -> (WorkerSpec m, OutSpecs)
+blkOnNewSlot getPeers = onNewSlotWorker True announceBlockOuts (blkOnNewSlotImpl getPeers)
 
 blkOnNewSlotImpl :: WorkMode ssc m =>
-                    SlotId -> SendActions m -> m ()
-blkOnNewSlotImpl (slotId@SlotId {..}) sendActions = do
+                    m (Set NodeId) -> SlotId -> SendActions m -> m ()
+blkOnNewSlotImpl getPeers (slotId@SlotId {..}) sendActions = do
     -- Just ignore this line. It will be deleted after fake messages
     -- policy (CSL-837) is introduced.
     logDebug "CSL-700 this message is top secret"
@@ -124,19 +127,20 @@ blkOnNewSlotImpl (slotId@SlotId {..}) sendActions = do
                  ("Not creating the block because it's delegated by psk: "%build)
                  heavyPskM
            | leader == ourPkHash ->
-                 onNewSlotWhenLeader slotId Nothing sendActions
+                 onNewSlotWhenLeader getPeers slotId Nothing sendActions
            | heavyWeAreDelegate ->
-                 onNewSlotWhenLeader slotId (Right <$> heavyPskM) sendActions
+                 onNewSlotWhenLeader getPeers slotId (Right <$> heavyPskM) sendActions
            | isJust validCert ->
-                 onNewSlotWhenLeader slotId  (Left <$> validCert) sendActions
+                 onNewSlotWhenLeader getPeers slotId  (Left <$> validCert) sendActions
            | otherwise -> pass
 
 onNewSlotWhenLeader
     :: WorkMode ssc m
-    => SlotId
+    => m (Set NodeId)
+    -> SlotId
     -> Maybe ProxySKEither
     -> Worker' m
-onNewSlotWhenLeader slotId pSk sendActions = do
+onNewSlotWhenLeader getPeers slotId pSk sendActions = do
     let logReason =
             sformat ("I have a right to create a block for the slot "%slotIdF%" ")
                     slotId
@@ -161,7 +165,7 @@ onNewSlotWhenLeader slotId pSk sendActions = do
                         sformat ("Created a new block:\n" %build) createdBlk
                     jlLog $ jlCreatedBlock (Right createdBlk)
                     verifyCreatedBlock createdBlk
-                    void $ fork $ announceBlock sendActions $ createdBlk ^. gbHeader
+                    void $ fork $ announceBlock getPeers sendActions $ createdBlk ^. gbHeader
             let whenNotCreated = logWarning . (mappend "I couldn't create a new block: ")
             createdBlock <- createMainBlock slotId pSk
             either whenNotCreated whenCreated createdBlock
@@ -188,12 +192,19 @@ verifyCreatedBlock blk =
 #if defined(WITH_WALLET)
 -- | This one just triggers every @max (slotDur / 4) 5@ seconds and
 -- asks for current tip. Does nothing when recovery is enabled.
-behindNatWorker :: (WorkMode ssc m, SscWorkersClass ssc) => (WorkerSpec m, OutSpecs)
-behindNatWorker = worker requestTipOuts $ \sendActions -> do
+--
+-- FIXME there is a better way. Establish a long-running connection to every
+-- peer asking them to push new data on it. This works even for NAT, since it's
+-- the consumer which initiates contact.
+behindNatWorker
+    :: (WorkMode ssc m, SscWorkersClass ssc)
+    => m (Set NodeId)
+    -> (WorkerSpec m, OutSpecs)
+behindNatWorker getPeers = worker requestTipOuts $ \sendActions -> do
     slotDur <- getLastKnownSlotDuration
     let delayInterval = max (slotDur `div` 4) (convertUnit $ (5 :: Second))
         action = forever $ do
-            triggerRecovery sendActions
+            triggerRecovery getPeers sendActions
             delay $ delayInterval
         handler (e :: SomeException) = do
             logWarning $ "Exception arised in behindNatWorker: " <> show e

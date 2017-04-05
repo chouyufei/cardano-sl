@@ -81,13 +81,13 @@ isDevelopment = False
 #endif
 
 -- | System start time embeded into binary.
-staticSysStart :: Maybe Timestamp
+staticSysStart :: Timestamp
 staticSysStart
-    | isDevelopment = Nothing
-    | st > 0        = Just $ Timestamp $ sec st
+    | isDevelopment = Timestamp (sec 1)
+    | st > 0        = Timestamp (sec st)
     -- If several local nodes are started within 20 sec,
     -- they'll have same start time
-    | otherwise     = Just $ Timestamp $ sec $
+    | otherwise     = Timestamp $ sec $
           (after3Mins `div` divider + alignment) * divider
   where
     st = ccProductionNetworkStartTime coreConstants

@@ -93,6 +93,8 @@ data NodeContext ssc = NodeContext
     -- (status in Daedalus). It's easy to falsify this value.
     , ncTxpGlobalSettings   :: !TxpGlobalSettings
     -- ^ Settings for global Txp.
+    , ncConnectedPeers      :: !(STM.TVar (Set NodeId))
+    -- ^ Set of peers that we're connected to.
     }
 
 instance ExtractContext UpdateContext (NodeContext ssc) where
