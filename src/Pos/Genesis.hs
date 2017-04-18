@@ -25,29 +25,30 @@ module Pos.Genesis
        , genesisLeaders
        ) where
 
-import           Data.Default       (Default (..))
-import           Data.List          (genericLength, genericReplicate)
-import qualified Data.Map.Strict    as M
-import qualified Data.Text          as T
-import           Formatting         (int, sformat, (%))
-import           Serokell.Util      (enumerate)
+import           Data.Default        (Default (..))
+import qualified Data.HashMap.Strict as HM
+import           Data.List           (genericLength, genericReplicate)
+import qualified Data.Map.Strict     as M
+import qualified Data.Text           as T
+import           Formatting          (int, sformat, (%))
+import           Serokell.Util       (enumerate)
 import           Universum
 
-import qualified Pos.Constants      as Const
-import           Pos.Core.Types     (StakeholderId)
-import           Pos.Crypto         (PublicKey, SecretKey, deterministicKeyGen,
-                                     unsafeHash)
-import           Pos.Genesis.Parser (compileGenData)
-import           Pos.Genesis.Types  (GenesisData (..), StakeDistribution (..),
-                                     getTotalStake)
-import           Pos.Lrc.FtsPure    (followTheSatoshi)
-import           Pos.Txp.Core.Types (TxIn (..), TxOut (..), TxOutAux (..),
-                                     TxOutDistribution)
-import           Pos.Txp.Toil.Types (Utxo)
-import           Pos.Types          (Address (..), Coin, SharedSeed (SharedSeed),
-                                     SlotLeaders, applyCoinPortion, coinToInteger,
-                                     divCoin, makePubKeyAddress, mkCoin, unsafeAddCoin,
-                                     unsafeMulCoin)
+import qualified Pos.Constants       as Const
+import           Pos.Core.Types      (StakeholderId)
+import           Pos.Crypto          (PublicKey, SecretKey, deterministicKeyGen,
+                                      unsafeHash)
+import           Pos.Genesis.Parser  (compileGenData)
+import           Pos.Genesis.Types   (GenesisData (..), StakeDistribution (..),
+                                      getTotalStake)
+import           Pos.Lrc.FtsPure     (followTheSatoshi)
+import           Pos.Txp.Core.Types  (TxIn (..), TxOut (..), TxOutAux (..),
+                                      TxOutDistribution)
+import           Pos.Txp.Toil.Types  (Utxo)
+import           Pos.Types           (Address (..), Coin, SharedSeed (SharedSeed),
+                                      SlotLeaders, applyCoinPortion, coinToInteger,
+                                      divCoin, makePubKeyAddress, mkCoin, unsafeAddCoin,
+                                      unsafeMulCoin)
 
 ----------------------------------------------------------------------------
 -- Static state
@@ -160,7 +161,7 @@ bitcoinDistributionImpl ratio coins (coinIdx, coin) =
 -- | Genesis 'Utxo'.
 genesisUtxo :: StakeDistribution -> Utxo
 genesisUtxo sd =
-    M.fromList . zipWith zipF (stakeDistribution sd) $
+    HM.fromList . zipWith zipF (stakeDistribution sd) $
     genesisAddresses <> tailAddresses
   where
     zipF (coin, distr) addr =

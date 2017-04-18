@@ -26,6 +26,7 @@ module Pos.Txp.DB.Utxo
        , sanityCheckUtxo
        ) where
 
+import qualified Data.HashMap.Strict  as HM
 import qualified Data.Map             as M
 import qualified Data.Text.Buildable
 import qualified Database.RocksDB     as Rocks
@@ -95,7 +96,7 @@ prepareGStateUtxo genesisUtxo =
     putIfEmpty :: m Bool -> m () -> m ()
     putIfEmpty exists putter = whenM (not <$> exists) $ putter
     putGenesisUtxo = do
-        let utxoList = M.toList genesisUtxo
+        let utxoList = HM.toList genesisUtxo
         writeBatchGState $ concatMap createBatchOp utxoList
         gsPutBi initializationFlagKey True
     createBatchOp (txin, txout) =
@@ -147,7 +148,7 @@ filterUtxo
 filterUtxo p = runUtxoIterator @i (step mempty)
   where
     step res = nextItem >>= maybe (pure res) (\e@(k, v) ->
-      if | p e       -> step (M.insert k v res)
+      if | p e       -> step (HM.insert k v res)
          | otherwise -> step res)
 
 -- | Get small sub-utxo containing only outputs of given address

@@ -15,11 +15,12 @@ import           Crypto.Random           (ChaChaDRG, MonadPseudoRandom, MonadRan
                                           drgNewSeed, getRandomBytes, seedFromInteger,
                                           withDRG)
 import qualified Data.ByteArray          as ByteArray (convert)
+import qualified Data.ByteString         as BS
 import           Universum
 
 -- | Generate a cryptographically random 'ByteString' of specific length.
 secureRandomBS :: MonadIO m => Int -> m ByteString
-secureRandomBS = liftIO . randBytes
+secureRandomBS = liftIO . fmap BS.copy . randBytes
 
 -- | You can use 'runSecureRandom' on any 'MonadRandom' computation to make
 -- it use a Really Secure™ randomness source (that is, OpenSSL).

@@ -78,7 +78,7 @@ eTxProcessTransaction itw@(txId, (UnsafeTx{..}, _, _)) = do
     toilEnv <- runDBTxp getToilEnv
     -- Resolved are unspent transaction outputs corresponding to input
     -- of given transaction.
-    let resolved = M.fromList $
+    let resolved = HM.fromList $
                    catMaybes $
                    toList $
                    NE.zipWith (liftM2 (,) . Just) _txInputs resolvedOuts

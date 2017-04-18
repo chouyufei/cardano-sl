@@ -16,6 +16,7 @@ module Pos.Client.Txp.Util
 
 import           Control.Lens        ((%=), (.=))
 import           Control.Monad.State (StateT (..), evalStateT)
+import qualified Data.HashMap.Strict as HM
 import           Data.List           (tail)
 import           Data.List.NonEmpty  ((<|))
 import qualified Data.Map            as M
@@ -107,7 +108,7 @@ prepareInpOuts utxo addr outputs = do
         Just inputsNE -> pure (map fst inputsNE, newOuts)
   where
     totalMoney = unsafeIntegerToCoin $ sumCoins $ map (txOutValue . toaOut) outputs
-    allUnspent = M.toList $ filterUtxoByAddr addr utxo
+    allUnspent = HM.toList $ filterUtxoByAddr addr utxo
     sortedUnspent =
         sortOn (Down . txOutValue . toaOut . snd) allUnspent
     pickInputs :: FlatUtxo -> InputPicker FlatUtxo

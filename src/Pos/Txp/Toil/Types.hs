@@ -52,11 +52,11 @@ import qualified Pos.Util.Modifier          as MM
 --
 -- Transaction inputs are identified by (transaction ID, index in list of
 -- output) pairs.
-type Utxo = Map TxIn TxOutAux
+type Utxo = HashMap TxIn TxOutAux
 
 -- | Format 'Utxo' map as json.
 formatUtxo :: Utxo -> Builder
-formatUtxo = mapBuilderJson . M.toList
+formatUtxo = mapBuilderJson . HM.toList
 
 -- | Specialized formatter for 'Utxo'.
 utxoF :: Format r (Utxo -> r)

@@ -32,7 +32,6 @@ import           Pos.Binary.Core        ()
 import           Pos.Constants          (genesisHeavyDelThd, genesisMpcThd,
                                          genesisUpdateVoteThd)
 import           Pos.Context.Class      (WithNodeContext)
-import           Pos.Context.Functions  (genesisUtxoM)
 import           Pos.DB.Class           (MonadDB)
 import           Pos.Genesis            (genesisDelegation)
 import           Pos.Lrc.Class          (RichmenComponent (..), SomeRichmenComponent (..),
@@ -52,13 +51,7 @@ prepareLrcRichmen
     :: (WithNodeContext ssc m, MonadDB m)
     => m ()
 prepareLrcRichmen = do
-    genesisDistribution <- concatMap txOutStake . toList <$> genesisUtxoM
-    mapM_ (prepareLrcRichmenDo genesisDistribution) components
-  where
-    prepareLrcRichmenDo distr (SomeRichmenComponent proxy) =
-        putIfEmpty
-            (getRichmenP proxy 0)
-            (putRichmenP proxy 0 $ computeInitial distr proxy)
+    undefined
 
 computeInitial
     :: RichmenComponent c

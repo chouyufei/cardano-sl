@@ -53,5 +53,5 @@ instance (MonadDB m, MonadMask m) => MonadBalances (TxpHolder __ m) where
         updates <- getUtxoModifier
         let toDel = MM.deletions updates
             toAdd = HM.filter (`addrBelongsTo` addr) $ MM.insertionsMap updates
-            utxo' = foldr M.delete utxo toDel
-        return $ HM.foldrWithKey M.insert utxo' toAdd
+            utxo' = foldr HM.delete utxo toDel
+        return $ HM.foldrWithKey HM.insert utxo' toAdd

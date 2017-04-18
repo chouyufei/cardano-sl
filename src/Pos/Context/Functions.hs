@@ -2,12 +2,8 @@
 
 module Pos.Context.Functions
        (
-         -- * Genesis
-         genesisUtxoM
-       , genesisLeadersM
-
          -- * Block semaphore.
-       , putBlkSemaphore
+         putBlkSemaphore
        , readBlkSemaphore
        , takeBlkSemaphore
 
@@ -35,16 +31,6 @@ import           Pos.Txp.Toil.Types     (Utxo)
 import           Pos.Types              (EpochIndex, HeaderHash, SlotLeaders)
 import           Pos.Util               (maybeThrow, readTVarConditional)
 import           Pos.Util.Context       (HasContext, askContext)
-
-----------------------------------------------------------------------------
--- Genesis
-----------------------------------------------------------------------------
-
-genesisUtxoM :: (Functor m, WithNodeContext ssc m) => m Utxo
-genesisUtxoM = ncGenesisUtxo <$> getNodeContext
-
-genesisLeadersM :: (Functor m, WithNodeContext ssc m) => m SlotLeaders
-genesisLeadersM = ncGenesisLeaders <$> getNodeContext
 
 ----------------------------------------------------------------------------
 -- Semaphore-related logic

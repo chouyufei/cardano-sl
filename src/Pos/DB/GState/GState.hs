@@ -15,7 +15,6 @@ import           Universum
 
 import           Pos.Context.Class      (WithNodeContext (getNodeContext))
 import           Pos.Context.Context    (ncSystemStart)
-import           Pos.Context.Functions  (genesisUtxoM)
 import           Pos.DB.Class           (MonadDB (getNodeDBs, usingReadOptions))
 import           Pos.DB.GState.Balances (getRealTotalStake)
 import           Pos.DB.GState.Common   (prepareGStateCommon)
@@ -32,12 +31,7 @@ prepareGStateDB
        (WithNodeContext ssc m, MonadDB m)
     => HeaderHash -> m ()
 prepareGStateDB initialTip = do
-    prepareGStateCommon initialTip
-    genesisUtxo <- genesisUtxoM
-    prepareGStateUtxo genesisUtxo
-    prepareGStateBalances genesisUtxo
-    systemStart <- ncSystemStart <$> getNodeContext
-    prepareGStateUS systemStart
+    undefined
 
 -- | Check that GState DB is consistent.
 sanityCheckGStateDB

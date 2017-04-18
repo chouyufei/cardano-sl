@@ -25,6 +25,7 @@ module Pos.Client.Txp.History
 
 import           Universum
 
+import           Control.Exception           (evaluate)
 import           Control.Lens                (makeLenses, (%=))
 import           Control.Monad.Loops         (unfoldrM)
 import           Control.Monad.Trans         (MonadTrans)
@@ -200,47 +201,7 @@ instance ( MonadDB m
     getTxHistory :: forall ssc. SscHelpersClass ssc
                  => Tagged ssc (Address -> Maybe (HeaderHash, Utxo) -> TxpHolder TxpExtra_TMP m TxHistoryAnswer)
     getTxHistory = Tagged $ \addr mInit -> do
-        tip <- GS.getTip
-
-        let getGenUtxo = filterUtxoByAddr addr . PC.ncGenesisUtxo <$> PC.getNodeContext
-        (bot, genUtxo) <- maybe ((,) <$> GS.getBot <*> getGenUtxo) pure mInit
-
-        -- Getting list of all hashes in main blockchain (excluding bottom block - it's genesis anyway)
-        hashList <- flip unfoldrM tip $ \h ->
-            if h == bot
-            then return Nothing
-            else do
-                header <- DB.getBlockHeader @ssc h >>=
-                    maybeThrow (DBMalformed "Best blockchain is non-continuous")
-                let prev = header ^. prevBlockL
-                return $ Just (h, prev)
-
-        -- Determine last block which txs should be cached
-        let cachedHashes = drop blkSecurityParam hashList
-            nonCachedHashes = take blkSecurityParam hashList
-
-        let blockFetcher h txs = do
-                blk <- lift . lift $ DB.getBlock @ssc h >>=
-                       maybeThrow (DBMalformed "A block mysteriously disappeared!")
-                deriveAddrHistoryPartial txs addr [blk]
-            localFetcher blkTxs = do
-                let mp (txid, (tx, txw, txd)) = (WithHash tx txid, txw, txd)
-                ltxs <- lift . lift $ getLocalTxs
-                txs <- getRelatedTxs addr $ map mp ltxs
-                return $ txs ++ blkTxs
-
-        mres <- runMaybeT $ do
-            (cachedTxs, cachedUtxo) <- runUtxoStateT
-                (foldrM blockFetcher [] cachedHashes) genUtxo
-
-            result <- evalUtxoStateT
-                (foldrM blockFetcher cachedTxs nonCachedHashes >>= localFetcher)
-                cachedUtxo
-
-            let lastCachedHash = maybe bot identity $ head cachedHashes
-            return $ TxHistoryAnswer lastCachedHash (length cachedTxs) cachedUtxo result
-
-        maybe (error "deriveAddrHistory: Nothing") pure mres
+        undefined
 
 #ifdef WITH_EXPLORER
     saveTx txw = () <$ runExceptT (eTxProcessTransaction txw)

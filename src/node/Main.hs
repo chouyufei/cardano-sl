@@ -1,7 +1,12 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main where
 
+import           Control.Concurrent    (threadDelay)
+import           Control.Exception     (evaluate)
+import qualified Data.ByteString.Lazy  as BSL
+import qualified Data.HashMap.Strict   as HM
 import           Data.List             ((!!))
 import           Data.Maybe            (fromJust)
 import           Data.Time.Clock.POSIX (getPOSIXTime)
@@ -10,10 +15,11 @@ import           Formatting            (sformat, shown, (%))
 import           Mockable              (Production, currentTime)
 import           Node                  (hoistSendActions)
 import           Serokell.Util         (sec)
+import           System.Mem
 import           System.Wlog           (LoggerName, WithLogger, logInfo)
 import           Universum
 
-import           Pos.Binary            ()
+import qualified Pos.Binary            as Bi
 import qualified Pos.CLI               as CLI
 import           Pos.Communication     (ActionSpec (..), OutSpecs, WorkerSpec, worker)
 import           Pos.Constants         (isDevelopment)
@@ -32,6 +38,7 @@ import           Pos.Ssc.GodTossing    (GtParams (..), SscGodTossing,
 import           Pos.Ssc.NistBeacon    (SscNistBeacon)
 import           Pos.Ssc.SscAlgo       (SscAlgo (..))
 import           Pos.Statistics        (getNoStatsT, getStatsMap, runStatsT')
+import           Pos.Txp               (Utxo)
 import           Pos.Update.Context    (ucUpdateSemaphore)
 import           Pos.Update.Params     (UpdateParams (..))
 import           Pos.Util              (inAssertMode, mappendPair)
@@ -204,6 +211,49 @@ getNodeParams args@Args {..} systemStart = do
         updateUserSecretVSS args =<<
         peekUserSecret (getKeyfilePath args)
     params <- liftIO $ baseParams "node" args
+    putText "generating utxo in 3s"
+    liftIO $ threadDelay 3000000
+    putText "started generating utxo"
+    let utxo = genesisUtxo $
+            if isDevelopment
+                then stakesDistr (CLI.flatDistr commonArgs)
+                                 (CLI.bitcoinDistr commonArgs)
+                                 (CLI.richPoorDistr commonArgs)
+                                 (CLI.expDistr commonArgs)
+                else genesisStakeDistribution
+    liftIO $ evaluate (rnf utxo)
+    liftIO $ BSL.writeFile "utxo" (Bi.encode utxo)
+    liftIO $ threadDelay 5000000
+
+    liftIO $ evaluate (rnf utxo)
+    liftIO performGC
+    putText "got rid of utxo"
+    liftIO $ threadDelay 5000000
+
+    utxo2 :: Utxo <- Bi.decode <$> liftIO (BSL.readFile "utxo")
+    liftIO $ evaluate (rnf utxo2)
+    liftIO performGC
+    putText "read new utxo"
+    liftIO $ threadDelay 5000000
+
+    let ks = HM.keys  utxo2
+        vs = HM.elems utxo2
+    liftIO $ evaluate (rnf ks)
+    liftIO $ evaluate (rnf vs)
+    liftIO performGC
+    putText "split utxo"
+    liftIO $ threadDelay 5000000
+
+    liftIO $ evaluate (rnf ks)
+    liftIO performGC
+    putText "got rid of keys"
+    liftIO $ threadDelay 5000000
+
+    liftIO $ evaluate (rnf vs)
+    liftIO performGC
+    putText "got rid of values"
+    liftIO $ threadDelay 5000000
+
     return NodeParams
         { npDbPathM = dbPath
         , npRebuildDb = rebuildDB
@@ -211,13 +261,7 @@ getNodeParams args@Args {..} systemStart = do
         , npUserSecret = userSecret
         , npSystemStart = systemStart
         , npBaseParams = params
-        , npCustomUtxo = genesisUtxo $
-              if isDevelopment
-                  then stakesDistr (CLI.flatDistr commonArgs)
-                                   (CLI.bitcoinDistr commonArgs)
-                                   (CLI.richPoorDistr commonArgs)
-                                   (CLI.expDistr commonArgs)
-                  else genesisStakeDistribution
+        , npCustomUtxo = mempty
         , npTimeLord = timeLord
         , npJLFile = jlPath
         , npAttackTypes = maliciousEmulationAttacks

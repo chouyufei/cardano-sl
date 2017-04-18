@@ -16,11 +16,11 @@ import           Pos.Txp.Toil.Types  (Utxo)
 
 -- | Select only TxOuts for given addresses
 filterUtxoByAddr :: Address -> Utxo -> Utxo
-filterUtxoByAddr addr = M.filter (`addrBelongsTo` addr)
+filterUtxoByAddr addr = HM.filter (`addrBelongsTo` addr)
 
 -- | Convert 'Utxo' to map from 'StakeholderId' to stake.
 utxoToStakes :: Utxo -> HashMap StakeholderId Coin
-utxoToStakes = foldl' putDistr mempty . M.toList
+utxoToStakes = foldl' putDistr mempty . HM.toList
   where
     plusAt hm (key, val) = HM.insertWith unsafeAddCoin key val hm
     putDistr hm (_, toaux) = foldl' plusAt hm (txOutStake toaux)

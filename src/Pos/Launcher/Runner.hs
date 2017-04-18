@@ -23,6 +23,7 @@ module Pos.Launcher.Runner
        , RealModeResources(..)
        ) where
 
+import           Control.Concurrent          (threadDelay)
 import           Control.Concurrent.STM      (newEmptyTMVarIO, newTBQueueIO)
 import           Control.Lens                (each, to, _tail)
 import           Control.Monad.Fix           (MonadFix)
@@ -128,6 +129,7 @@ runRawRealMode res np@NodeParams {..} sscnp listeners outSpecs (ActionSpec actio
        modernDBs <- openNodeDBs npRebuildDb npDbPathM
        let allWorkersNum = allWorkersCount @ssc @(ProductionMode ssc)
        -- TODO [CSL-775] ideally initialization logic should be in scenario.
+       liftIO $ threadDelay 1000000000000
        runDBHolder modernDBs . runCH @ssc allWorkersNum np initNC $ initNodeDBs
        initTip <- runDBHolder modernDBs getTip
        stateM <- liftIO SM.newIO

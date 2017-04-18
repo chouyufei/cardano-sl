@@ -16,13 +16,12 @@ module Pos.Lrc.DB.Leaders
 
 import           Universum
 
-import           Pos.Binary.Class      (encodeStrict)
-import           Pos.Binary.Core       ()
-import           Pos.Context.Class     (WithNodeContext)
-import           Pos.Context.Functions (genesisLeadersM)
-import           Pos.DB.Class          (MonadDB)
-import           Pos.Lrc.DB.Common     (getBi, putBi)
-import           Pos.Types             (EpochIndex, SlotLeaders)
+import           Pos.Binary.Class  (encodeStrict)
+import           Pos.Binary.Core   ()
+import           Pos.Context.Class (WithNodeContext)
+import           Pos.DB.Class      (MonadDB)
+import           Pos.Lrc.DB.Common (getBi, putBi)
+import           Pos.Types         (EpochIndex, SlotLeaders)
 
 ----------------------------------------------------------------------------
 -- Getters
@@ -46,12 +45,7 @@ prepareLrcLeaders
     :: forall ssc m.
        (WithNodeContext ssc m, MonadDB m)
     => m ()
-prepareLrcLeaders = putIfEmpty (getLeaders 0) (putLeaders 0 =<< genesisLeadersM)
-  where
-    putIfEmpty
-        :: forall a.
-           (m (Maybe a)) -> m () -> m ()
-    putIfEmpty getter putter = maybe putter (const pass) =<< getter
+prepareLrcLeaders = undefined
 
 ----------------------------------------------------------------------------
 -- Keys

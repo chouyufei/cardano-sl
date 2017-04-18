@@ -25,9 +25,11 @@ module Pos.Core.Address
        , unsafeAddressHash
        ) where
 
-import           Crypto.Hash            (Blake2b_224, Digest, SHA3_256, hashlazy)
+import           Crypto.Hash            (Blake2b_224, Digest, SHA3_256,
+                                         digestFromByteString, hashlazy)
 import qualified Crypto.Hash            as CryptoHash
-import           Data.ByteArray         (ByteArrayAccess)
+import           Data.ByteArray         (ByteArrayAccess, convert)
+import qualified Data.ByteString        as BS
 import           Data.ByteString.Base58 (Alphabet (..), bitcoinAlphabet, decodeBase58,
                                          encodeBase58)
 import qualified Data.ByteString.Lazy   as BSL (fromStrict, toStrict)
@@ -171,7 +173,10 @@ addressDetailedF = later $ \case
 ----------------------------------------------------------------------------
 
 unsafeAddressHash :: Bi a => a -> AddressHash b
-unsafeAddressHash = AbstractHash . secondHash . firstHash
+unsafeAddressHash x =
+    let h = secondHash . firstHash $ x
+    in AbstractHash $ fromMaybe undefined $
+       digestFromByteString (BS.copy (convert h))
   where
     firstHash :: Bi a => a -> Digest SHA3_256
     firstHash = hashlazy . Bi.encode

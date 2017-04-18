@@ -24,7 +24,6 @@ import           Universum
 
 import           Pos.Block.Types                  (Blund)
 import           Pos.Context.Class                (WithNodeContext)
-import           Pos.Context.Functions            (genesisLeadersM)
 import           Pos.DB.Block                     (getBlock, loadBlundsByDepth,
                                                    loadBlundsWhile, prepareBlockDB)
 import           Pos.DB.Class                     (MonadDB, MonadDBCore (..))
@@ -79,14 +78,7 @@ initNodeDBs
        , MonadDB m )
     => m ()
 initNodeDBs = do
-    leaders0 <- genesisLeadersM
-    let genesisBlock0 = mkGenesisBlock @ssc Nothing 0 leaders0
-        initialTip = headerHash genesisBlock0
-    prepareBlockDB genesisBlock0
-    prepareGStateDB initialTip
-    prepareGStateBlockExtra initialTip
-    prepareLrcDB
-    prepareMiscDB
+    undefined
 
 -- | Get block corresponding to tip.
 getTipBlock

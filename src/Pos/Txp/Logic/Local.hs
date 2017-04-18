@@ -11,6 +11,7 @@ module Pos.Txp.Logic.Local
 
 import           Control.Monad.Except (MonadError (..))
 import           Data.Default         (Default (def))
+import qualified Data.HashMap.Strict  as HM
 import qualified Data.List.NonEmpty   as NE
 import qualified Data.Map             as M (fromList)
 import           Formatting           (build, sformat, (%))
@@ -53,7 +54,7 @@ txProcessTransaction itw@(txId, (UnsafeTx{..}, _, _)) = do
     toilEnv <- runDBTxp getToilEnv
     -- Resolved are unspent transaction outputs corresponding to input
     -- of given transaction.
-    let resolved = M.fromList $
+    let resolved = HM.fromList $
                    catMaybes $
                    toList $
                    NE.zipWith (liftM2 (,) . Just) _txInputs resolvedOuts
