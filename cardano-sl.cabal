@@ -429,7 +429,7 @@ library
                       , concurrent-extra
                       , conduit >= 1.2.8
                       , containers
-                      , cryptonite >= 0.19 && <= 0.22
+                      , cryptonite >= 0.19 && <= 0.23
                       , cryptonite-openssl >= 0.5
                       , data-default
                       , deepseq
@@ -650,6 +650,7 @@ executable cardano-analyzer
 
   build-tools: cpphs >= 1.19
   ghc-options: -pgmP cpphs -optP --cpp
+  buildable: False
 
 executable cardano-wallet
   hs-source-dirs:      src/wallet
@@ -718,6 +719,7 @@ executable cardano-wallet
 
   if !os(windows)
     build-depends:     unix
+  buildable: False
 
 executable cardano-wallet-hs2purs
   hs-source-dirs:      src/wallet-purescript
@@ -762,6 +764,7 @@ executable cardano-wallet-hs2purs
 
   if flag(with-web)
     cpp-options: -DWITH_WEB
+  buildable: False
 
 executable cardano-smart-generator
   hs-source-dirs:      src/smart-generator
@@ -830,6 +833,7 @@ executable cardano-smart-generator
     buildable:         True
   else
     buildable:         False
+  buildable: False
 
 executable cardano-dht-keygen
   hs-source-dirs:      src/dht-keygen
@@ -885,6 +889,7 @@ executable cardano-dht-keygen
 
   build-tools: cpphs >= 1.19
   ghc-options: -pgmP cpphs -optP --cpp
+  buildable: False
 
 executable cardano-web-docs
   hs-source-dirs:      src/web-docs
@@ -924,6 +929,7 @@ executable cardano-web-docs
     buildable:         True
   else
     buildable:         False
+  buildable: False
 
 executable cardano-wallet-web-docs
   hs-source-dirs:      src/wallet-web-docs
@@ -965,6 +971,7 @@ executable cardano-wallet-web-docs
     buildable:         True
   else
     buildable:         False
+  buildable: False
 
 executable cardano-swagger
   hs-source-dirs:      src/wallet-web-api-swagger
@@ -989,6 +996,7 @@ executable cardano-swagger
   default-extensions:   NoImplicitPrelude
   build-tools: cpphs >= 1.19
   ghc-options: -pgmP cpphs -optP --cpp
+  buildable: False
 
 executable cardano-checks
   hs-source-dirs:      src/checks
@@ -1003,6 +1011,7 @@ executable cardano-checks
                        -Wall
                        -O2
   default-extensions:  OverloadedStrings
+  buildable: False
 
 executable cardano-genupdate
   hs-source-dirs:      src/genupdate
@@ -1022,6 +1031,7 @@ executable cardano-genupdate
                        -O2
   default-extensions:  OverloadedStrings
                        NoImplicitPrelude
+  buildable: False
 
 executable cardano-keygen
   hs-source-dirs:      src/keygen
@@ -1071,6 +1081,7 @@ executable cardano-keygen
                         ViewPatterns
                         LambdaCase
                         MultiWayIf
+  buildable: False
 
 executable cardano-launcher
   hs-source-dirs:      src/launcher
@@ -1100,6 +1111,7 @@ executable cardano-launcher
                        TupleSections
   if os(windows)
     LD-Options:     -mwindows
+  buildable: False
 
 executable cardano-addr-convert
   hs-source-dirs:      src/addr-convert
