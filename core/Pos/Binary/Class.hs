@@ -80,6 +80,7 @@ import           Data.Binary.Put             (PutM, putByteString, putCharUtf8,
                                               putLazyByteString, putWord8, runPut,
                                               runPutM)
 import qualified Data.ByteString             as BS
+import qualified Data.ByteString.Internal    as BS.Internal
 import           Data.Char                   (isAscii)
 import qualified Data.ByteString.Lazy        as BSL
 import           Data.Hashable               (Hashable (..))
@@ -666,7 +667,9 @@ limitGet n0 act
   | n0 < 0 = fail "limitGet: negative size"
   | otherwise = go n0 (runCont act BS.empty Done)
   where
-  go _ (Done left x) = pushFront left >> return x
+  go _ (Done left x)
+    | BS.null left = return x
+    | otherwise    = pushFront left >> return x
   go 0 (Partial resume) = go 0 (resume Nothing)
   go n (Partial resume) = do
     inp <- unsafeCoerce (OurC (\inp k -> do
@@ -685,7 +688,9 @@ limitGet n0 act
     case inp of
       Nothing  -> go n (resume Nothing)
       Just str -> go (n - fromIntegral (length str)) (resume (Just str))
-  go _ (Fail bs err) = pushFront bs >> fail err
+  go _ (Fail bs err)
+    | BS.null bs = fail err
+    | otherwise  = pushFront bs >> fail err
   go n (BytesRead r resume) =
     go n (resume $! n0 - n - r)
 
@@ -700,7 +705,7 @@ isolate64 n0 act
   go !n (Done left x)
     | n == 0 && BS.null left = return x
     | otherwise = do
-        pushFront left
+        if BS.null left then return () else pushFront left
         let consumed = n0 - n - fromIntegral (BS.length left)
         fail $ "isolate: the decoder consumed " ++ show consumed ++ " bytes" ++
                  " which is less than the expected " ++ show n0 ++ " bytes"
@@ -722,9 +727,23 @@ isolate64 n0 act
     case inp of
       Nothing  -> go n (resume Nothing)
       Just str -> go (n - fromIntegral (BS.length str)) (resume (Just str))
-  go _ (Fail bs err) = pushFront bs >> fail err
+  go _ (Fail bs err)
+    | BS.null bs = fail err
+    | otherwise  = pushFront bs >> fail err
   go n (BytesRead r resume) =
     go n (resume $! n0 - n - r)
+
+----------------------------------------------------------------------------
+-- Better BS.append
+----------------------------------------------------------------------------
+
+nonCopyingAppend :: ByteString -> ByteString -> ByteString
+nonCopyingAppend (BS.Internal.PS _ _ 0) b = b
+nonCopyingAppend a (BS.Internal.PS _ _ 0) = a
+nonCopyingAppend a@(BS.Internal.PS fp1 off1 len1)
+                 b@(BS.Internal.PS fp2 off2 len2)
+    | fp1 == fp2 && off1 + len1 == off2 = BS.Internal.PS fp1 off1 (len1+len2)
+    | otherwise                         = a <> b
 
 ----------------------------------------------------------------------------
 -- Guts of 'binary'
@@ -734,7 +753,7 @@ isolate64 n0 act
 -- do and then I'll submit some pull requests to 'binary' and hopefully all
 -- of this won't be needed. –@neongreen
 pushFront :: ByteString -> Get ()
-pushFront bs = unsafeCoerce (OurC (\ inp ks -> ks (BS.append bs inp) ()))
+pushFront bs = unsafeCoerce (OurC (\ inp ks -> ks (nonCopyingAppend bs inp) ()))
 {-# INLINE pushFront #-}
 
 -- This ***has*** to correspond to the implementation of 'Get' in 'binary'
@@ -748,7 +767,7 @@ type OurSuccess a r = ByteString -> a -> Decoder r
 
 -- More functions from 'binary'.
 prompt :: ByteString -> Decoder a -> (ByteString -> Decoder a) -> Decoder a
-prompt inp kf ks = prompt' kf (\inp' -> ks (inp `BS.append` inp'))
+prompt inp kf ks = prompt' kf (\inp' -> ks (inp `nonCopyingAppend` inp'))
 
 -- And more.
 prompt' :: Decoder a -> (ByteString -> Decoder a) -> Decoder a
