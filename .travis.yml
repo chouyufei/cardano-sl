@@ -1,3 +1,4 @@
+dist: trusty
 language: nix
 # container based has 4G ram which is not enough for haskell deps to compile
 sudo: true
