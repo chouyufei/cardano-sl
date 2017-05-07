@@ -12,11 +12,12 @@ import           Control.Lens               (_Wrapped)
 import           Control.Monad.Except       (ExceptT, runExceptT, throwError)
 import           Control.Monad.STM          (retry)
 import           Data.List.NonEmpty         ((<|))
+import qualified Data.Map                   as M
 import           Formatting                 (build, int, sformat, shown, stext, (%))
 import           Mockable                   (handleAll, throw)
 import           Paths_cardano_sl           (version)
 import           Serokell.Util.Text         (listJson)
-import           System.Wlog                (logDebug, logError, logWarning)
+import           System.Wlog                (logDebug, logError, logInfo, logWarning)
 import           Universum
 
 import           Pos.Binary.Communication   ()
@@ -34,11 +35,14 @@ import           Pos.Communication.Protocol (ConversationActions (..), NodeId, O
                                              SendActions (..), WorkerSpec, convH,
                                              toOutSpecs, worker)
 import           Pos.Context                (NodeContext (..), getNodeContext)
+import           Pos.Core                   (Address (..))
 import           Pos.Crypto                 (shortHashF)
 import           Pos.DB.Class               (MonadDBCore)
 import           Pos.Reporting.Methods      (reportingFatal)
 import           Pos.Shutdown               (runIfNotShutdown)
 import           Pos.Ssc.Class              (SscWorkersClass)
+import           Pos.Txp.Core.Types         (toaOut, txOutAddress)
+import           Pos.Txp.DB.Utxo            (getAllPotentiallyHugeUtxo)
 import           Pos.Types                  (Block, BlockHeader, HasHeaderHash (..),
                                              HeaderHash, blockHeader, difficultyL,
                                              prevBlockL)
@@ -66,6 +70,28 @@ retrievalWorkerImpl sendActions = handleAll handleTop $ do
     mainLoop
   where
     mainLoop = runIfNotShutdown $ reportingFatal version $ do
+
+        utxoOutAddrs <-
+            map (txOutAddress . toaOut) . M.elems <$> getAllPotentiallyHugeUtxo
+        let isRedeem (RedeemAddress _) = True
+            isRedeem _                 = False
+        let isPubKey (PubKeyAddress _ _) = True
+            isPubKey _                   = False
+        let isScript (ScriptAddress _) = True
+            isScript _                 = False
+        let isUnknown (UnknownAddressType _ _) = True
+            isUnknown _                        = False
+        let redeemAddrs =  length $ filter isRedeem utxoOutAddrs
+        let pubkeyAddrs =  length $ filter isPubKey utxoOutAddrs
+        let scriptAddrs =  length $ filter isScript utxoOutAddrs
+        let unknownAddrs = length $ filter isUnknown utxoOutAddrs
+        logInfo $ sformat ("Utxo stats: redeem "%int%", pubkey "%int%
+                           ", script "%int%", unknown "%int)
+                          redeemAddrs
+                          pubkeyAddrs
+                          scriptAddrs
+                          unknownAddrs
+
         queue <- ncBlockRetrievalQueue <$> getNodeContext
         recHeaderVar <- ncRecoveryHeader <$> getNodeContext
         inRecovery <- needRecovery (Proxy @ssc)

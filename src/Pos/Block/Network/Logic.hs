@@ -407,13 +407,17 @@ applyWithoutRollback sendActions blocks = do
             let toRelay =
                     fromMaybe (error "Listeners#applyWithoutRollback is broken") $
                     find (\b -> headerHash b == newTip) blocks
-                prefix = blocks
-                    & _Wrapped %~ NE.takeWhile ((/= newTip) . headerHash)
-                    & map (view blockHeader)
-                applied = NE.fromList $
-                    getOldestFirst prefix <> one (toRelay ^. blockHeader)
+                prefix =
+                    blocks & _Wrapped %~ NE.takeWhile ((/= newTip) . headerHash)
+                applied = NE.fromList $ getOldestFirst prefix <> one toRelay
             relayBlock sendActions toRelay
-            logInfo $ blocksAppliedMsg applied
+            logInfo $ blocksAppliedMsg $ fmap (view blockHeader) applied
+            let rightsNE :: NE (Either a b) -> Maybe (NE b)
+                rightsNE =
+                    NE.nonEmpty . fmap (fromMaybe (error "aoeu")) .
+                    NE.filter isJust . fmap rightToMaybe
+            whenJust (rightsNE applied) $ \kek ->
+                forM_ kek $ logInfo . sformat ("Created a new block: "%build)
   where
     newestTip = blocks ^. _Wrapped . _neLast . headerHashG
     applyWithoutRollbackDo
