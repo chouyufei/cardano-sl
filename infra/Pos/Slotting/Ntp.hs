@@ -84,7 +84,6 @@ type SlottingConstraint m =
     , MonadBaseControl IO m
     , WithLogger m
     , MonadSlotsData m
-    , MonadCatch m
     , MonadMask m
     , Mockables m
         [ Fork
@@ -262,6 +261,7 @@ mkNtpSlottingVar
        , MonadMask m
        , MonadBaseControl IO m
        , WithLogger m
+       , MonadMask m
        , Mockables m
         [ CurrentTime
         , Delay

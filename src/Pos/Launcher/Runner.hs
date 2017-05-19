@@ -25,78 +25,68 @@ module Pos.Launcher.Runner
        , bracketResourcesKademlia
        ) where
 
-import           Control.Concurrent.STM       (newEmptyTMVarIO, newTBQueueIO)
-import           Control.Lens                 (each, to, _tail)
-import           Control.Monad.Fix            (MonadFix)
-import           Data.Default                 (def)
-import           Data.Tagged                  (Tagged (..), untag)
-import qualified Data.Time                    as Time
-import qualified Ether
-import           Formatting                   (build, sformat, shown, (%))
-import           Mockable                     (CurrentTime, Mockable, MonadMockable,
-                                               Production (..), Throw, bracket, finally,
-                                               throw)
-import           Network.QDisc.Fair           (fairQDisc)
-import           Network.Transport.Abstract   (Transport, closeTransport, hoistTransport)
-import           Network.Transport.Concrete   (concrete)
-import qualified Network.Transport.TCP        as TCP
-import           Node                         (Node, NodeAction (..),
-                                               defaultNodeEnvironment, hoistSendActions,
-                                               node, simpleNodeEndPoint)
-import           Node.Util.Monitor            (setupMonitor, stopMonitor)
-import qualified STMContainers.Map            as SM
-import           System.Random                (newStdGen)
-import           System.Wlog                  (LoggerConfig (..), WithLogger, logError,
-                                               logInfo, productionB, releaseAllHandlers,
-                                               setupLogging, usingLoggerName)
-import           Universum                    hiding (bracket, finally)
+import           Control.Concurrent.STM      (newEmptyTMVarIO, newTBQueueIO)
+import           Control.Lens                (each, to, _tail)
+import           Control.Monad.Fix           (MonadFix)
+import qualified Data.ByteString.Char8       as BS8
+import           Data.Default                (def)
+import           Data.Tagged                 (untag)
+import qualified Data.Time                   as Time
+import           Formatting                  (build, sformat, shown, (%))
+import           Mockable                    (CurrentTime, Mockable, MonadMockable,
+                                              Production (..), Throw, bracket, finally,
+                                              throw)
+import           Network.QDisc.Fair          (fairQDisc)
+import           Network.Transport           (Transport, closeTransport)
+import           Network.Transport.Concrete  (concrete)
+import qualified Network.Transport.TCP       as TCP
+import           Node                        (Node, NodeAction (..),
+                                              defaultNodeEnvironment, hoistSendActions,
+                                              node, simpleNodeEndPoint)
+import           Node.Util.Monitor           (setupMonitor, stopMonitor)
+import qualified STMContainers.Map           as SM
+import           System.Random               (newStdGen)
+import           System.Wlog                 (LoggerConfig (..), WithLogger,
+                                              getLoggerName, logError, logInfo, mapperB,
+                                              productionB, releaseAllHandlers,
+                                              setupLogging, usingLoggerName)
+import           Universum                   hiding (bracket, finally)
 
-import           Pos.Binary                   ()
-import           Pos.Block.BListener          (runBListenerStub)
-import           Pos.CLI                      (readLoggerConfig)
-import           Pos.Client.Txp.Balances      (runBalancesRedirect)
-import           Pos.Client.Txp.History       (runTxHistoryRedirect)
-import           Pos.Communication            (ActionSpec (..), BiP (..), InSpecs (..),
-                                               ListenersWithOut, NodeId, OutSpecs (..),
-                                               PeerId (..), VerInfo (..), allListeners,
-                                               hoistListenerSpec, unpackLSpecs)
-import           Pos.Communication.PeerState  (PeerStateTag, runPeerStateRedirect)
-import qualified Pos.Constants                as Const
-import           Pos.Context                  (BlkSemaphore (..), ConnectedPeers (..),
-                                               NodeContext (..), StartTime (..))
-import           Pos.Core                     (Timestamp ())
-import           Pos.Crypto                   (createProxySecretKey, encToPublic)
-import           Pos.DB                       (MonadDB, NodeDBs)
-import           Pos.DB.DB                    (initNodeDBs, openNodeDBs,
-                                               runGStateCoreRedirect)
-import           Pos.DB.GState                (getTip)
-import           Pos.DB.Misc                  (addProxySecretKey)
-import           Pos.Delegation.Class         (DelegationWrap)
-import           Pos.DHT.Real                 (KademliaDHTInstance,
-                                               KademliaDHTInstanceConfig (..),
-                                               KademliaParams (..), startDHTInstance,
-                                               stopDHTInstance)
-import           Pos.Discovery.Holders        (runDiscoveryConstT, runDiscoveryKademliaT)
-import           Pos.Genesis                  (genesisLeaders, genesisSeed)
-import           Pos.Launcher.Param           (BaseParams (..), LoggingParams (..),
-                                               NodeParams (..))
-import           Pos.Lrc.Context              (LrcContext (..), LrcSyncData (..))
-import qualified Pos.Lrc.DB                   as LrcDB
-import           Pos.Lrc.Fts                  (followTheSatoshiM)
-import           Pos.Slotting                 (NtpSlottingVar, SlottingVar,
-                                               mkNtpSlottingVar)
-import           Pos.Slotting.MemState.Holder (runSlotsDataRedirect)
-import           Pos.Slotting.Ntp             (runSlotsRedirect)
-import           Pos.Ssc.Class                (SscConstraint, SscNodeContext, SscParams,
-                                               sscCreateNodeContext)
-import           Pos.Ssc.Extra                (SscMemTag, bottomSscState, mkSscState)
-import           Pos.Statistics               (getNoStatsT, runStatsT')
-import           Pos.Txp                      (mkTxpLocalData)
-import           Pos.Txp.DB                   (genesisFakeTotalStake,
-                                               runBalanceIterBootstrap)
-import           Pos.Txp.MemState             (TxpHolderTag)
-import           Pos.Wallet.WalletMode        (runBlockchainInfoRedirect,
-                                               runUpdatesRedirect)
+import           Pos.Binary                  ()
+import           Pos.CLI                     (readLoggerConfig)
+import           Pos.Communication           (ActionSpec (..), BiP (..), InSpecs (..),
+                                              ListenersWithOut, OutSpecs (..),
+                                              PeerId (..), SysStartResponse, VerInfo (..),
+                                              allListeners, hoistListenerSpec, mergeLs,
+                                              stubListenerOneMsg, sysStartReqListener,
+                                              unpackLSpecs)
+import           Pos.Communication.PeerState (runPeerStateHolder)
+import qualified Pos.Constants               as Const
+import           Pos.Context                 (ContextHolder (..), NodeContext (..),
+                                              runContextHolder)
+import           Pos.Core                    (Timestamp)
+import           Pos.Crypto                  (createProxySecretKey, encToPublic)
+import           Pos.DB                      (MonadDB (..), runDBHolder)
+import           Pos.DB.DB                   (initNodeDBs, openNodeDBs)
+import           Pos.DB.GState               (getTip)
+import           Pos.DB.Misc                 (addProxySecretKey)
+import           Pos.Delegation.Holder       (runDelegationT)
+import           Pos.DHT.Model               (MonadDHT (..), getMeaningPart)
+import           Pos.DHT.Real                (KademliaDHTInstance,
+                                              KademliaDHTInstanceConfig (..),
+                                              runKademliaDHT, startDHTInstance,
+                                              stopDHTInstance)
+import           Pos.Launcher.Param          (BaseParams (..), LoggingParams (..),
+                                              NodeParams (..))
+import           Pos.Lrc.Context             (LrcContext (..), LrcSyncData (..))
+import qualified Pos.Lrc.DB                  as LrcDB
+import           Pos.Slotting                (SlottingVar, mkNtpSlottingVar,
+                                              runNtpSlotting, runSlottingHolder)
+import           Pos.Ssc.Class               (SscConstraint, SscNodeContext, SscParams,
+                                              sscCreateNodeContext)
+import           Pos.Ssc.Extra               (ignoreSscHolder, mkStateAndRunSscHolder)
+import           Pos.Statistics              (getNoStatsT, runStatsT')
+import           Pos.Txp                     (mkTxpLocalData, runTxpHolder)
 #ifdef WITH_EXPLORER
 import           Pos.Explorer                 (explorerTxpGlobalSettings)
 #else
@@ -430,9 +420,13 @@ runCH allWorkersNum params@NodeParams {..} sscNodeContext db act = do
 ----------------------------------------------------------------------------
 
 nodeStartMsg :: WithLogger m => BaseParams -> m ()
-nodeStartMsg BaseParams {..} = logInfo msg
+nodeStartMsg BaseParams {..} = do
+    logInfo msg1
+    logInfo msg2
   where
-    msg = sformat ("Started node.")
+    msg1 = sformat ("Application: " %build% ", last known block version " %build)
+                   Const.curSoftwareVersion Const.lastKnownBlockVersion
+    msg2 = sformat ("Started node, joining to DHT network " %build) bpDHTPeers
 
 getRealLoggerConfig :: MonadIO m => LoggingParams -> m LoggerConfig
 getRealLoggerConfig LoggingParams{..} = do
@@ -471,9 +465,9 @@ bracketDHTInstance BaseParams {..} KademliaParams {..} action = bracket acquire 
 
 createTransportTCP
     :: (MonadIO m, WithLogger m, Mockable Throw m)
-    => TCP.TCPAddr
-    -> m (Transport m)
+    => TCP.TCPAddr -> m Transport
 createTransportTCP addrInfo = do
+    loggerName <- getLoggerName
     let tcpParams =
             (TCP.defaultTCPParameters
              { TCP.transportConnectTimeout =
@@ -483,6 +477,9 @@ createTransportTCP addrInfo = do
              -- when new connections are made. This prevents an easy denial
              -- of service attack.
              , TCP.tcpCheckPeerHost = True
+             , TCP.tcpServerExceptionHandler = \e ->
+                     usingLoggerName (loggerName <> "transport") $
+                         logError $ sformat ("Exception in tcp server: " % shown) e
              })
     transportE <-
         liftIO $ TCP.createTransport addrInfo tcpParams

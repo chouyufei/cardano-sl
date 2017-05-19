@@ -5,22 +5,19 @@
 
 module Main where
 
-import           Control.Monad.Error.Class  (throwError)
-import           Control.Monad.Reader       (MonadReader (..), ReaderT, ask, runReaderT)
-import           Control.Monad.Trans.Either (EitherT (..))
-import           Control.Monad.Trans.Maybe  (MaybeT (..))
-import qualified Data.ByteString            as BS
-import           Data.List                  ((!!))
-import qualified Data.List.NonEmpty         as NE
-import qualified Data.Set                   as S (fromList, toList)
-import qualified Data.Text                  as T
-import           Data.Time.Units            (convertUnit)
-import           Formatting                 (build, int, sformat, stext, (%))
-import           Mockable                   (Production, delay)
-import           Network.Transport.Abstract (Transport, hoistTransport)
-import           Options.Applicative        (execParser)
-import           System.IO                  (hFlush, stdout)
-import           System.Wlog                (logDebug, logError, logInfo, logWarning)
+import           Control.Monad.Reader      (MonadReader (..), ReaderT, ask, runReaderT)
+import           Control.Monad.Trans.Maybe (MaybeT (..))
+import qualified Data.ByteString           as BS
+import qualified Data.HashMap.Strict       as HM
+import           Data.List                 ((!!))
+import qualified Data.List.NonEmpty        as NE
+import qualified Data.Text                 as T
+import           Data.Time.Units           (convertUnit)
+import           Formatting                (build, int, sformat, stext, (%))
+import           Mockable                  (delay)
+import           Options.Applicative       (execParser)
+import           System.IO                 (hFlush, stdout)
+import           System.Wlog               (logDebug, logError, logInfo, logWarning)
 #if !(defined(mingw32_HOST_OS))
 import           System.Exit                (ExitCode (ExitSuccess))
 import           System.Posix.Process       (exitImmediately)
@@ -28,37 +25,35 @@ import           System.Posix.Process       (exitImmediately)
 import           Serokell.Util              (ms, sec)
 import           Universum
 
-import           Pos.Binary                 (Raw)
-import qualified Pos.CLI                    as CLI
-import           Pos.Communication          (NodeId, OutSpecs, SendActions, Worker',
-                                             WorkerSpec, sendTxOuts, submitTx, worker)
-import           Pos.Constants              (genesisBlockVersionData, isDevelopment)
-import           Pos.Crypto                 (Hash, SecretKey, SignTag (SignUSVote),
-                                             emptyPassphrase, encToPublic, fakeSigner,
-                                             hash, hashHexF, noPassEncrypt, safeSign,
-                                             toPublic, unsafeHash, withSafeSigner)
-import           Pos.Data.Attributes        (mkAttributes)
-import           Pos.Delegation             (sendProxySKHeavyOuts, sendProxySKLightOuts)
-import           Pos.Discovery              (findPeers, getPeers)
-import           Pos.Genesis                (genesisDevSecretKeys,
-                                             genesisStakeDistribution, genesisUtxo)
-import           Pos.Launcher               (BaseParams (..), LoggingParams (..),
-                                             bracketResources, stakesDistr)
-import           Pos.Ssc.GodTossing         (SscGodTossing)
-import           Pos.Ssc.SscAlgo            (SscAlgo (..))
-import           Pos.Txp                    (TxOut (..), TxOutAux (..), txaF)
-import           Pos.Types                  (coinF, makePubKeyAddress)
-import           Pos.Update                 (BlockVersionData (..), UpdateVote (..),
-                                             mkUpdateProposalWSign, patakUpdateData,
-                                             skovorodaUpdateData)
-import           Pos.Util.UserSecret        (readUserSecret, usKeys)
-import           Pos.Util.Util              (powerLift)
-import           Pos.Wallet                 (WalletMode, WalletParams (..),
-                                             WalletStaticPeersMode, addSecretKey,
-                                             getBalance, getSecretKeys,
-                                             runWalletStaticPeers, sendProposalOuts,
-                                             sendVoteOuts, submitUpdateProposal,
-                                             submitVote)
+import           Pos.Binary                (Raw)
+import qualified Pos.CLI                   as CLI
+import           Pos.Communication         (OutSpecs, SendActions, Worker', WorkerSpec,
+                                            sendTxOuts, submitTx, worker)
+import           Pos.Constants             (genesisBlockVersionData, isDevelopment)
+import           Pos.Crypto                (Hash, SecretKey, SignTag (SignUSVote),
+                                            emptyPassphrase, encToPublic, fakeSigner,
+                                            hash, hashHexF, noPassEncrypt, safeSign,
+                                            toPublic, unsafeHash, withSafeSigner)
+import           Pos.Data.Attributes       (mkAttributes)
+import           Pos.Delegation            (sendProxySKHeavyOuts, sendProxySKLightOuts)
+import           Pos.DHT.Model             (DHTNode, discoverPeers, getKnownPeers)
+import           Pos.Genesis               (genesisDevSecretKeys,
+                                            genesisStakeDistribution, genesisUtxo)
+import           Pos.Launcher              (BaseParams (..), LoggingParams (..),
+                                            bracketResources, stakesDistr)
+import           Pos.Ssc.GodTossing        (SscGodTossing)
+import           Pos.Ssc.NistBeacon        (SscNistBeacon)
+import           Pos.Ssc.SscAlgo           (SscAlgo (..))
+import           Pos.Txp                   (TxOut (..), TxOutAux (..), txaF)
+import           Pos.Types                 (coinF, makePubKeyAddress)
+import           Pos.Update                (BlockVersionData (..), UpdateData (..),
+                                            UpdateVote (..), mkUpdateProposalWSign)
+import           Pos.Util.UserSecret       (readUserSecret, usKeys)
+import           Pos.Wallet                (MonadKeys (addSecretKey, getSecretKeys),
+                                            WalletMode, WalletParams (..), WalletRealMode,
+                                            getBalance, runWalletReal, sendProposalOuts,
+                                            sendVoteOuts, submitUpdateProposal,
+                                            submitVote)
 #ifdef WITH_WEB
 import           Pos.Wallet.Web             (walletServeWebLite, walletServerOuts)
 #endif
@@ -144,26 +139,26 @@ runCmd sendActions ProposeUpdate{..} = do
             , bvdSlotDuration = convertUnit (sec puSlotDurationSec)
             , bvdMaxBlockSize = puMaxBlockSize
             }
-    let udata = maybe patakUpdateData skovorodaUpdateData diffFile
+    let udata' h = HM.fromList [(puSystemTag, UpdateData h h h h)]
+    let udata = maybe (error "Failed to read prop file") udata' diffFile
     let whenCantCreate = error . mappend "Failed to create update proposal: "
-    lift $ withSafeSigner skey (pure emptyPassphrase) $ \case
-        Nothing -> putText "Invalid passphrase"
-        Just ss -> do
-            let updateProposal = either whenCantCreate identity $
-                    mkUpdateProposalWSign
-                        puBlockVersion
-                        bvd
-                        puSoftwareVersion
-                        udata
-                        (mkAttributes ())
-                        ss
-            if null na
-                then putText "Error: no addresses specified"
-                else do
-                    submitUpdateProposal sendActions ss na updateProposal
-                    let id = hash updateProposal
-                    putText $
-                      sformat ("Update proposal submitted, upId: "%hashHexF) id
+    lift $ withSafeSigner skey (pure emptyPassphrase) $ \ss -> do
+        let updateProposal = either whenCantCreate identity $
+                mkUpdateProposalWSign
+                    puBlockVersion
+                    bvd
+                    puSoftwareVersion
+                    udata
+                    (mkAttributes ())
+                    ss
+        if null na
+            then putText "Error: no addresses specified"
+            else do
+                submitUpdateProposal sendActions ss na updateProposal
+                let id = hash updateProposal
+                putText $
+                  sformat ("Update proposal submitted, upId: "%hashHexF) id
+
 runCmd _ Help = do
     putText $
         unlines
