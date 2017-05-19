@@ -70,7 +70,7 @@ import           Pos.Crypto                 (Hash, PublicKey, SafeSigner,
                                              SignTag (SignUSProposal), Signature,
                                              checkSig, hash, safeSign, safeToPublic,
                                              shortHashF)
-import           Pos.Data.Attributes        (Attributes)
+import           Pos.Data.Attributes        (Attributes, attrRemain)
 import           Pos.Util.Util              (Some)
 
 ----------------------------------------------------------------------------

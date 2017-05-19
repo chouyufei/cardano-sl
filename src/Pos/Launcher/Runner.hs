@@ -32,12 +32,14 @@ import qualified Data.ByteString.Char8       as BS8
 import           Data.Default                (def)
 import           Data.Tagged                 (untag)
 import qualified Data.Time                   as Time
+import qualified Ether
 import           Formatting                  (build, sformat, shown, (%))
 import           Mockable                    (CurrentTime, Mockable, MonadMockable,
                                               Production (..), Throw, bracket, finally,
                                               throw)
 import           Network.QDisc.Fair          (fairQDisc)
-import           Network.Transport           (Transport, closeTransport)
+
+import           Network.Transport.Abstract  (Transport, closeTransport, hoistTransport)
 import           Network.Transport.Concrete  (concrete)
 import qualified Network.Transport.TCP       as TCP
 import           Node                        (Node, NodeAction (..),
@@ -55,52 +57,51 @@ import           Universum                   hiding (bracket, finally)
 import           Pos.Binary                  ()
 import           Pos.CLI                     (readLoggerConfig)
 import           Pos.Communication           (ActionSpec (..), BiP (..), InSpecs (..),
-                                              ListenersWithOut, OutSpecs (..),
-                                              PeerId (..), SysStartResponse, VerInfo (..),
+                                              ListenersWithOut, NodeId, OutSpecs (..),
+                                              PeerId (..), VerInfo (..),
                                               allListeners, hoistListenerSpec, mergeLs,
-                                              stubListenerOneMsg, sysStartReqListener,
-                                              unpackLSpecs)
-import           Pos.Communication.PeerState (runPeerStateHolder)
+                                              stubListenerOneMsg, unpackLSpecs)
+import           Pos.Communication.PeerState (PeerStateTag, runPeerStateRedirect)
 import qualified Pos.Constants               as Const
-import           Pos.Context                 (ContextHolder (..), NodeContext (..),
-                                              runContextHolder)
+import           Pos.Context                 (NodeContext (..))
 import           Pos.Core                    (Timestamp)
 import           Pos.Crypto                  (createProxySecretKey, encToPublic)
-import           Pos.DB                      (MonadDB (..), runDBHolder)
+import           Pos.DB                      (MonadDB, NodeDBs)
 import           Pos.DB.DB                   (initNodeDBs, openNodeDBs)
 import           Pos.DB.GState               (getTip)
 import           Pos.DB.Misc                 (addProxySecretKey)
-import           Pos.Delegation.Holder       (runDelegationT)
-import           Pos.DHT.Model               (MonadDHT (..), getMeaningPart)
+import           Pos.Delegation.Class        (DelegationWrap)
+import           Pos.DHT.Model               (getMeaningPart)
 import           Pos.DHT.Real                (KademliaDHTInstance,
                                               KademliaDHTInstanceConfig (..),
-                                              runKademliaDHT, startDHTInstance,
+                                              KademliaParams (..), startDHTInstance,
                                               stopDHTInstance)
 import           Pos.Launcher.Param          (BaseParams (..), LoggingParams (..),
                                               NodeParams (..))
 import           Pos.Lrc.Context             (LrcContext (..), LrcSyncData (..))
 import qualified Pos.Lrc.DB                  as LrcDB
-import           Pos.Slotting                (SlottingVar, mkNtpSlottingVar,
-                                              runNtpSlotting, runSlottingHolder)
+import           Pos.Slotting                (NtpSlottingVar, SlottingVar,
+                                              mkNtpSlottingVar)
 import           Pos.Ssc.Class               (SscConstraint, SscNodeContext, SscParams,
                                               sscCreateNodeContext)
-import           Pos.Ssc.Extra               (ignoreSscHolder, mkStateAndRunSscHolder)
+import           Pos.Ssc.Extra               (SscMemTag, bottomSscState, mkSscState)
 import           Pos.Statistics              (getNoStatsT, runStatsT')
-import           Pos.Txp                     (mkTxpLocalData, runTxpHolder)
+import           Pos.Txp                     (mkTxpLocalData)
 #ifdef WITH_EXPLORER
-import           Pos.Explorer                 (explorerTxpGlobalSettings)
+import           Pos.Explorer                (explorerTxpGlobalSettings)
 #else
-import           Pos.Txp                      (txpGlobalSettings)
+import           Pos.Txp                     (txpGlobalSettings)
+import           Pos.Txp.MemState            (TxpHolderTag)
 #endif
-import           Pos.Update.Context           (UpdateContext (..))
-import qualified Pos.Update.DB                as GState
-import           Pos.Update.MemState          (newMemVar)
-import           Pos.Util.JsonLog             (JLFile (..))
-import           Pos.Util.UserSecret          (usKeys)
-import           Pos.Worker                   (allWorkersCount)
-import           Pos.WorkMode                 (ProductionMode, RawRealMode, RawRealModeK,
-                                               ServiceMode, StaticMode, StatsMode,
-                                               WorkMode)
+import           Pos.Update.Context          (UpdateContext (..))
+import qualified Pos.Update.DB               as GState
+import           Pos.Update.MemState         (newMemVar)
+import           Pos.Util.JsonLog            (JLFile (..))
+import           Pos.Util.UserSecret         (usKeys)
+import           Pos.Worker                  (allWorkersCount)
+import           Pos.WorkMode                (ProductionMode, RawRealMode, RawRealModeK,
+                                              ServiceMode, StaticMode, StatsMode,
+                                              WorkMode)
 
 -- Remove this once there's no #ifdef-ed Pos.Txp import
 {-# ANN module ("HLint: ignore Use fewer imports" :: Text) #-}
