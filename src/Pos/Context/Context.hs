@@ -34,6 +34,7 @@ module Pos.Context.Context
        , MonadRecoveryHeader
        , ConnectedPeers(..)
        , BlkSemaphore(..)
+       , BListener
        ) where
 
 import           Universum
@@ -47,6 +48,7 @@ import qualified Ether
 import           Ether.Internal                (HList (..), HasLens (..), Tags, TagsK)
 import           System.Wlog                   (LoggerConfig)
 
+import           Pos.Block.BListener           (BListener)
 import           Pos.Block.Core                (BlockHeader)
 import           Pos.Communication.Relay       (RelayInvQueue)
 import           Pos.Communication.Relay.Types (RelayContext (..))
@@ -74,8 +76,8 @@ import           Pos.Util.UserSecret           (UserSecret)
 
 data NodeContextTag
 
-type MonadNodeContext ssc =
-    Ether.MonadReader NodeContextTag (NodeContext ssc)
+type MonadNodeContext ssc m =
+    Ether.MonadReader NodeContextTag (NodeContext ssc m) m
 
 data LastKnownHeaderTag
 
@@ -133,7 +135,7 @@ newtype StartTime = StartTime
     }
 
 -- | NodeContext contains runtime context of node.
-data NodeContext ssc = NodeContext
+data NodeContext ssc m = NodeContext
     { ncJLFile              :: !JLFile
     -- @georgeee please add documentation when you see this comment
     , ncSscContext          :: !(SscNodeContext ssc)
@@ -189,6 +191,7 @@ data NodeContext ssc = NodeContext
     -- ^ Leaders of the first epoch
     , ncConnectedPeers      :: !ConnectedPeers
     -- ^ Set of peers that we're connected to.
+    , ncBListener           :: !(BListener m)
     }
 
 makeLensesFor
@@ -210,7 +213,9 @@ makeLensesFor
     , ("ncGenesisLeaders", "ncGenesisLeadersL")
     , ("ncStartTime", "ncStartTimeL")
     , ("ncTxpGlobalSettings", "ncTxpGlobalSettingsL")
-    , ("ncShutdownNotifyQueue", "ncShutdownNotifyQueueL") ]
+    , ("ncShutdownNotifyQueue", "ncShutdownNotifyQueueL")
+    , ("ncBListener", "ncBListenerL")
+    ]
     ''NodeContext
 
 makeLensesFor
@@ -220,7 +225,7 @@ makeLensesFor
     , ("npCustomUtxo", "npCustomUtxoL") ]
     ''NodeParams
 
-type instance TagsK (NodeContext ssc) =
+type instance TagsK (NodeContext ssc m) =
   Type ':
   Type ':
   Type ':
@@ -242,6 +247,7 @@ type instance TagsK (NodeContext ssc) =
   Type ':
   Type ':
   Type ':
+  ((Type -> Type) -> Type) ':
   '[]
 
 return []
@@ -250,7 +256,7 @@ type (:::) = 'HCons
 
 infixr :::
 
-type instance Tags (NodeContext ssc) =
+type instance Tags (NodeContext ssc m) =
   NodeContextTag         :::
   SscContextTag          :::
   UpdateContext          :::
@@ -272,27 +278,28 @@ type instance Tags (NodeContext ssc) =
   ProgressHeaderTag      :::
   BlockRetrievalQueueTag :::
   RecoveryHeaderTag      :::
+  BListener              :::
   'HNil
 
-instance HasLens NodeContextTag (NodeContext ssc) (NodeContext ssc) where
+instance HasLens NodeContextTag (NodeContext ssc m) (NodeContext ssc m) where
     lensOf = identity
 
-instance r ~ SscNodeContext ssc => HasLens SscContextTag (NodeContext ssc) r where
+instance r ~ SscNodeContext ssc => HasLens SscContextTag (NodeContext ssc m) r where
     lensOf = ncSscContextL
 
-instance HasLens UpdateContext (NodeContext ssc) UpdateContext where
+instance HasLens UpdateContext (NodeContext ssc m) UpdateContext where
     lensOf = ncUpdateContextL
 
-instance HasLens LrcContext (NodeContext ssc) LrcContext where
+instance HasLens LrcContext (NodeContext ssc m) LrcContext where
     lensOf = ncLrcContextL
 
-instance HasLens NodeParams (NodeContext ssc) NodeParams where
+instance HasLens NodeParams (NodeContext ssc m) NodeParams where
     lensOf = ncNodeParamsL
 
-instance HasLens UpdateParams (NodeContext ssc) UpdateParams where
+instance HasLens UpdateParams (NodeContext ssc m) UpdateParams where
     lensOf = ncNodeParamsL . npUpdateParamsL
 
-instance HasLens ReportingContext (NodeContext ssc) ReportingContext where
+instance HasLens ReportingContext (NodeContext ssc m) ReportingContext where
     lensOf = lens getter (flip setter)
       where
         getter nc =
@@ -303,7 +310,7 @@ instance HasLens ReportingContext (NodeContext ssc) ReportingContext where
             set (ncNodeParamsL . npReportServersL) (rc ^. rcReportServers) .
             set ncLoggerConfigL (rc ^. rcLoggingConfig)
 
-instance HasLens RelayContext (NodeContext ssc) RelayContext where
+instance HasLens RelayContext (NodeContext ssc m) RelayContext where
     lensOf = lens getter (flip setter)
       where
         getter nc =
@@ -314,7 +321,7 @@ instance HasLens RelayContext (NodeContext ssc) RelayContext where
             set (ncNodeParamsL . npPropagationL) (_rlyIsPropagation rc) .
             set ncInvPropagationQueueL (_rlyPropagationQueue rc)
 
-instance HasLens ShutdownContext (NodeContext ssc) ShutdownContext where
+instance HasLens ShutdownContext (NodeContext ssc m) ShutdownContext where
     lensOf = lens getter (flip setter)
       where
         getter nc =
@@ -325,41 +332,44 @@ instance HasLens ShutdownContext (NodeContext ssc) ShutdownContext where
             set ncShutdownFlagL (_shdnIsTriggered sc) .
             set ncShutdownNotifyQueueL (_shdnNotifyQueue sc)
 
-instance HasLens JLFile (NodeContext ssc) JLFile where
+instance HasLens JLFile (NodeContext ssc m) JLFile where
     lensOf = ncJLFileL
 
-instance HasLens GenesisUtxo (NodeContext ssc) GenesisUtxo where
+instance HasLens GenesisUtxo (NodeContext ssc m) GenesisUtxo where
     lensOf = ncNodeParamsL . npCustomUtxoL . coerced
 
-instance HasLens GenesisLeaders (NodeContext ssc) GenesisLeaders where
+instance HasLens GenesisLeaders (NodeContext ssc m) GenesisLeaders where
     lensOf = ncGenesisLeadersL . coerced
 
-instance HasLens (TVar UserSecret) (NodeContext ssc) (TVar UserSecret) where
+instance HasLens (TVar UserSecret) (NodeContext ssc m) (TVar UserSecret) where
     lensOf = ncUserSecretL
 
-instance HasLens LastKnownHeaderTag (NodeContext ssc) (LastKnownHeader ssc) where
+instance HasLens LastKnownHeaderTag (NodeContext ssc m) (LastKnownHeader ssc) where
     lensOf = ncLastKnownHeaderL
 
-instance HasLens ConnectedPeers (NodeContext ssc) ConnectedPeers where
+instance HasLens ConnectedPeers (NodeContext ssc m) ConnectedPeers where
     lensOf = ncConnectedPeersL
 
-instance HasLens ProgressHeaderTag (NodeContext ssc) (ProgressHeader ssc) where
+instance HasLens ProgressHeaderTag (NodeContext ssc m) (ProgressHeader ssc) where
     lensOf = ncProgressHeaderL
 
-instance HasLens BlockRetrievalQueueTag (NodeContext ssc) (BlockRetrievalQueue ssc) where
+instance HasLens BlockRetrievalQueueTag (NodeContext ssc m) (BlockRetrievalQueue ssc) where
     lensOf = ncBlockRetrievalQueueL
 
-instance HasLens RecoveryHeaderTag (NodeContext ssc) (RecoveryHeader ssc) where
+instance HasLens RecoveryHeaderTag (NodeContext ssc m) (RecoveryHeader ssc) where
     lensOf = ncRecoveryHeaderL
 
-instance HasLens BlkSemaphore (NodeContext ssc) BlkSemaphore where
+instance HasLens BlkSemaphore (NodeContext ssc m) BlkSemaphore where
     lensOf = ncBlkSemaphoreL
 
-instance HasLens StartTime (NodeContext ssc) StartTime where
+instance HasLens StartTime (NodeContext ssc m) StartTime where
     lensOf = ncStartTimeL
 
-instance HasLens TxpGlobalSettings (NodeContext ssc) TxpGlobalSettings where
+instance HasLens TxpGlobalSettings (NodeContext ssc m) TxpGlobalSettings where
     lensOf = ncTxpGlobalSettingsL
+
+instance HasLens (BListener m) (NodeContext ssc m) (BListener m) where
+    lensOf = ncBListenerL
 
 ----------------------------------------------------------------------------
 -- Helper functions

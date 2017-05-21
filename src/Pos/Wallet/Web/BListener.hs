@@ -5,7 +5,7 @@
 -- during @onApplyBlocks@ and @onRollbackBlocks@ callbacks.
 
 module Pos.Wallet.Web.BListener
-       ( -- BListener instance.
+       ( trackingBListener
        ) where
 
 import           Universum
@@ -17,7 +17,7 @@ import           Mockable                   (MonadMockable)
 import           Serokell.Util              (listJson)
 import           System.Wlog                (WithLogger, logDebug)
 
-import           Pos.Block.BListener        (MonadBListener (..))
+import           Pos.Block.BListener        (BListener (..))
 import           Pos.Block.Core             (mainBlockTxPayload)
 import           Pos.Block.Types            (Blund, undoTx)
 import           Pos.Core                   (HeaderHash, headerHash, prevBlockL)
@@ -36,14 +36,12 @@ import qualified Pos.Wallet.Web.State       as WS
 import           Pos.Wallet.Web.Tracking    (CAccModifier, applyModifierToWSet,
                                              trackingApplyTxs, trackingRollbackTxs)
 
-instance ( MonadDB m
-         , MonadMockable m
-         , MonadKeys m
-         , WithLogger m
-         )
-         => MonadBListener (WalletWebDB m) where
-    onApplyBlocks = onApplyTracking
-    onRollbackBlocks = onRollbackTracking
+trackingBListener ::
+       forall m. (MonadDB m, MonadMockable m, MonadKeys m, WithLogger m)
+    => BListener (WalletWebDB m)
+trackingBListener =
+    BListener
+    {onApplyBlocks = onApplyTracking, onRollbackBlocks = onRollbackTracking}
 
 -- Perform this action under block lock.
 onApplyTracking

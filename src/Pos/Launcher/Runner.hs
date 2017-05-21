@@ -52,7 +52,7 @@ import           System.Wlog                  (LoggerConfig (..), WithLogger, lo
 import           Universum                    hiding (bracket, finally)
 
 import           Pos.Binary                   ()
-import           Pos.Block.BListener          (runBListenerStub)
+import           Pos.Block.BListener          (bListenerStub)
 import           Pos.CLI                      (readLoggerConfig)
 import           Pos.Client.Txp.Balances      (runBalancesRedirect)
 import           Pos.Client.Txp.History       (runTxHistoryRedirect)
@@ -108,7 +108,8 @@ import           Pos.Update.MemState          (newMemVar)
 import           Pos.Util.JsonLog             (JLFile (..))
 import           Pos.Util.UserSecret          (usKeys)
 import           Pos.Worker                   (allWorkersCount)
-import           Pos.WorkMode                 (ProductionMode, RawRealMode, RawRealModeK,
+import           Pos.WorkMode                 (ProductionMode,
+                                               RawRealMode (getRawRealMode), RawRealModeK,
                                                ServiceMode, StaticMode, StatsMode,
                                                WorkMode)
 
@@ -170,7 +171,7 @@ runRawRealMode peerId transport np@NodeParams {..} sscnp listeners outSpecs (Act
                    runGStateCoreRedirect .
                    runUpdatesRedirect .
                    runBlockchainInfoRedirect .
-                   runBListenerStub $
+                   getRawRealMode $
                    act
 
         let startMonitoring node' = case lpEkgPort of
@@ -208,7 +209,6 @@ runRawRealMode peerId transport np@NodeParams {..} sscnp listeners outSpecs (Act
            runGStateCoreRedirect .
            runUpdatesRedirect .
            runBlockchainInfoRedirect .
-           runBListenerStub .
            runServer peerId transport listeners outSpecs startMonitoring stopMonitoring . ActionSpec $
                \vI sa -> nodeStartMsg npBaseParams >> action vI sa
   where
@@ -372,7 +372,7 @@ runCH
     -> NodeParams
     -> SscNodeContext ssc
     -> NodeDBs
-    -> Ether.ReadersT (NodeContext ssc) m a
+    -> Ether.ReadersT (NodeContext ssc m) m a
     -> m a
 runCH allWorkersNum params@NodeParams {..} sscNodeContext db act = do
     ncLoggerConfig <- getRealLoggerConfig $ bpLoggingParams npBaseParams
@@ -422,6 +422,7 @@ runCH allWorkersNum params@NodeParams {..} sscNodeContext db act = do
 #else
             , ncTxpGlobalSettings = txpGlobalSettings
 #endif
+            , ncBListener = bListenerStub
             , .. }
     Ether.runReadersT act ctx
 

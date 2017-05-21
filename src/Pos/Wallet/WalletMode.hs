@@ -43,7 +43,6 @@ import           Mockable                     (Production)
 import           Pos.Reporting.MemState       (ReportingContext)
 import           System.Wlog                  (LoggerNameBox, WithLogger)
 
-import           Pos.Block.BListener          (BListenerStub)
 import           Pos.Block.Core               (BlockHeader)
 import           Pos.Client.Txp.Balances      (MonadBalances (..), getBalanceFromUtxo)
 import           Pos.Client.Txp.History       (MonadTxHistory (..), deriveAddrHistory)
@@ -287,7 +286,6 @@ type WalletMode m
 ---------------------------------------------------------------
 
 type RawWalletMode =
-    BListenerStub (
     BlockchainInfoNotImplemented (
     UpdatesNotImplemented (
     PeerStateRedirect (
@@ -302,7 +300,7 @@ type RawWalletMode =
         ) (
     LoggerNameBox (
     Production
-    )))))))))
+    ))))))))
 
 type WalletRealMode = DiscoveryKademliaT RawWalletMode
 

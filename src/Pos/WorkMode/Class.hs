@@ -19,10 +19,10 @@ import qualified Ether
 import           Mockable                    (MonadMockable)
 import           System.Wlog                 (WithLogger)
 
-import           Pos.Block.BListener         (MonadBListener)
 import           Pos.Communication.PeerState (WithPeerState)
 import           Pos.Communication.Relay     (MonadRelayMem)
-import           Pos.Context                 (BlkSemaphore, MonadBlockRetrievalQueue,
+import           Pos.Context                 (BListener, BlkSemaphore,
+                                              MonadBlockRetrievalQueue,
                                               MonadLastKnownHeader, MonadProgressHeader,
                                               MonadRecoveryHeader, MonadSscContext,
                                               NodeParams, StartTime, TxpGlobalSettings)
@@ -80,12 +80,12 @@ type WorkMode ssc m
       , Ether.MonadReader' NodeParams m
       , Ether.MonadReader' UpdateParams m
       , Ether.MonadReader' TxpGlobalSettings m
+      , Ether.MonadReader' (BListener m) m
       , MonadSscContext ssc m
       , MonadStats m
       , MonadJL m
       , WithPeerState m
       , MonadShutdownMem m
-      , MonadBListener m
       , MonadDiscovery m
       )
 

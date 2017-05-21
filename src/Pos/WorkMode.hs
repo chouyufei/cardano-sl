@@ -10,7 +10,7 @@ module Pos.WorkMode
        -- * Actual modes
        , RawRealModeK
        , ProductionMode
-       , RawRealMode
+       , RawRealMode (..)
        , ServiceMode
        , StatsMode
        , StaticMode
@@ -24,7 +24,6 @@ import qualified Ether
 import           Mockable.Production          (Production)
 import           System.Wlog                  (LoggerNameBox (..))
 
-import           Pos.Block.BListener          (BListenerStub)
 import           Pos.Client.Txp.Balances      (BalancesRedirect)
 import           Pos.Client.Txp.History       (TxHistoryRedirect)
 import           Pos.Communication.PeerState  (PeerStateCtx, PeerStateRedirect,
@@ -49,8 +48,8 @@ import           Pos.WorkMode.Class           (MinWorkMode, TxpExtra_TMP, WorkMo
 ----------------------------------------------------------------------------
 
 -- | RawRealMode is a basis for `WorkMode`s used to really run system.
-type RawRealMode ssc =
-    BListenerStub (
+newtype RawRealMode ssc a = RawRealMode {
+  getRawRealMode ::
     BlockchainInfoRedirect (
     UpdatesRedirect (
     GStateCoreRedirect (
@@ -68,9 +67,10 @@ type RawRealMode ssc =
         , Tagged (TVar DelegationWrap) (TVar DelegationWrap)
         , Tagged PeerStateTag (PeerStateCtx Production)
         ) (
-    Ether.ReadersT (NodeContext ssc) (
+    Ether.ReadersT (NodeContext ssc (RawRealMode ssc)) (
     LoggerNameBox Production
-    )))))))))))
+    )))))))))) a
+  }
 
 -- | RawRealMode + kademlia. Used in wallet too.
 type RawRealModeK ssc = DiscoveryKademliaT (RawRealMode ssc)

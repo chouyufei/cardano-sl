@@ -93,12 +93,12 @@ type WebHandler ssc =
         ( Tagged DB.NodeDBs DB.NodeDBs
         , Tagged TxpHolderTag (GenericTxpLocalData TxpExtra_TMP)
         ) (
-    Ether.ReadersT (NodeContext ssc) Production
+    Ether.ReadersT (NodeContext ssc Production) Production
     )
 
 convertHandler
     :: forall ssc a.
-       NodeContext ssc
+       NodeContext ssc Production
     -> DB.NodeDBs
     -> GenericTxpLocalData TxpExtra_TMP
     -> WebHandler ssc a
@@ -119,7 +119,7 @@ convertHandler nc nodeDBs wrap handler =
 
 nat :: forall ssc m . MyWorkMode ssc m => m (WebHandler ssc :~> Handler)
 nat = do
-    nc <- Ether.ask @NodeContextTag
+    nc <- undefined -- Ether.ask @NodeContextTag
     nodeDBs <- DB.getNodeDBs
     txpLocalData <- askTxpMem
     return $ NT (convertHandler nc nodeDBs txpLocalData)

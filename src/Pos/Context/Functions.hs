@@ -20,6 +20,9 @@ module Pos.Context.Functions
          -- * Misc
        , getUptime
        , recoveryInProgress
+
+         -- * BListener
+       , onApplyBlocksM
        ) where
 
 import qualified Control.Concurrent.STM as STM
@@ -28,14 +31,18 @@ import           Data.Time.Units        (Microsecond, fromMicroseconds)
 import qualified Ether
 import           Universum
 
+import           Pos.Block.BListener    (BListener (..))
+import           Pos.Block.Types        (Blund)
 import           Pos.Context.Context    (BlkSemaphore (..), GenesisLeaders (..),
                                          GenesisUtxo (..), MonadRecoveryHeader,
                                          RecoveryHeaderTag, StartTime (..))
+import           Pos.Core               (EpochIndex, HeaderHash, SlotLeaders)
 import           Pos.Lrc.Context        (LrcContext (..), LrcSyncData (..))
 import           Pos.Lrc.Error          (LrcError (..))
+import           Pos.Ssc.Class.Helpers  (SscHelpersClass)
 import           Pos.Txp.Toil.Types     (Utxo)
-import           Pos.Types              (EpochIndex, HeaderHash, SlotLeaders)
 import           Pos.Util               (maybeThrow, readTVarConditional)
+import           Pos.Util.Chrono        (NE, OldestFirst)
 
 ----------------------------------------------------------------------------
 -- Genesis
@@ -116,3 +123,15 @@ recoveryInProgress :: (MonadIO m, MonadRecoveryHeader ssc m) => m Bool
 recoveryInProgress = do
     var <- Ether.ask @RecoveryHeaderTag
     isJust <$> atomically (STM.tryReadTMVar var)
+
+----------------------------------------------------------------------------
+-- BListener
+----------------------------------------------------------------------------
+
+onApplyBlocksM ::
+       (Ether.MonadReader' (BListener m) m, SscHelpersClass ssc)
+    => OldestFirst NE (Blund ssc)
+    -> m ()
+onApplyBlocksM blunds = do
+    BListener {..} <- Ether.ask'
+    onApplyBlocks blunds

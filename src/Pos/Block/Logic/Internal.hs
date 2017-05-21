@@ -26,11 +26,11 @@ import           Paths_cardano_sl     (version)
 import           Serokell.Util        (Color (Red), colorize)
 import           System.Wlog          (logWarning)
 
-import           Pos.Block.BListener  (MonadBListener (..))
 import           Pos.Block.Core       (Block, GenesisBlock, MainBlock, mbTxPayload,
                                        mbUpdatePayload)
 import           Pos.Block.Types      (Blund, Undo (undoTx, undoUS))
-import           Pos.Context          (BlkSemaphore, putBlkSemaphore, takeBlkSemaphore)
+import           Pos.Context          (BlkSemaphore, onApplyBlocksM, putBlkSemaphore,
+                                       takeBlkSemaphore)
 import           Pos.Core             (HeaderHash, IsGenesisHeader, IsMainHeader,
                                        epochIndexL, gbBody, gbHeader, headerHash,
                                        headerHashG, prevBlockL)
@@ -117,7 +117,7 @@ applyBlocksUnsafeDo blunds pModifier = do
     mapM_ putToDB blunds
     -- If the program is interrupted at this point (after putting on block),
     -- we will rollback all wallet sets at the next launch.
-    onApplyBlocks blunds `catch` logWarn
+    onApplyBlocksM blunds `catch` logWarn
     TxpGlobalSettings {..} <- Ether.ask'
     usBatch <- SomeBatchOp <$> usApplyBlocks (map toUpdateBlock blocks) pModifier
     delegateBatch <- SomeBatchOp <$> delegationApplyBlocks blocks
@@ -166,7 +166,7 @@ rollbackBlocksUnsafe
 rollbackBlocksUnsafe toRollback = reportingFatal version $ do
     -- If program is interrupted after call @onRollbackBlocks@,
     -- we will load all wallet set not rolled yet at the next launch.
-    onRollbackBlocks toRollback `catch` logWarn
+    -- onRollbackBlocks toRollback `catch` logWarn
     delRoll <- SomeBatchOp <$> delegationRollbackBlocks toRollback
     usRoll <- SomeBatchOp <$> usRollbackBlocks
                   (toRollback & each._2 %~ undoUS
