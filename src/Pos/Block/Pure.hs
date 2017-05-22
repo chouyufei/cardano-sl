@@ -25,7 +25,7 @@ module Pos.Block.Pure
        , verifyHeaders
        ) where
 
-import           Control.Lens                 (ix, (%=))
+import           Control.Lens                 (at, ix, (.=))
 import           Control.Monad.Except         (MonadError (throwError))
 import           Data.Default                 (Default (def))
 import qualified Data.HashMap.Strict          as HM
@@ -417,7 +417,7 @@ verifyHeader VerifyHeaderParams {..} h =
            ]
 
     heavyCertValid validCerts = flip (either mempty) h $ \h' ->
-        case h' ^. gbhConsensus ^. mcdSignature of
+        case h' ^. gbhConsensus . mcdSignature of
             (BlockPSignatureHeavy proxySig) ->
                 -- Block consensus public key is issuer's one, so we can
                 -- use it to index heavy psks map.
@@ -566,8 +566,8 @@ pskHeavyMapApplyBlock block m = flip execState m $ do
     let (toDelete,toReplace) =
             partition (\ProxySecretKey{..} -> pskIssuerPk == pskDelegatePk)
                       (view mainBlockDlgPayload block)
-    for_ toDelete $ \psk -> identity %= HM.delete (pskIssuerPk psk)
-    for_ toReplace $ \psk -> identity %= HM.insert (pskIssuerPk psk) psk
+    for_ toDelete $ \psk -> at (pskIssuerPk psk) .= Nothing
+    for_ toReplace $ \psk -> at (pskIssuerPk psk) .= Just psk
 
 
 -- CHECK: @verifyBlocks
