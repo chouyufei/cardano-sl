@@ -8,6 +8,7 @@ module Pos.Launcher.Param
 
 import           Pos.Crypto          (SecretKey)
 import           Pos.Security.CLI    (AttackTarget, AttackType)
+import           Pos.Statistics      (EkgParams, StatsdParams)
 import           Pos.Txp.Toil.Types  (Utxo)
 import           Pos.Types           (Timestamp)
 import           Pos.Update.Params   (UpdateParams)
@@ -20,7 +21,6 @@ data LoggingParams = LoggingParams
     { lpRunnerTag     :: !LoggerName        -- ^ Prefix for logger, like "time-slave"
     , lpHandlerPrefix :: !(Maybe FilePath)  -- ^ Prefix of path for all logs
     , lpConfigPath    :: !(Maybe FilePath)  -- ^ Path to logger configuration
-    , lpEkgPort       :: !(Maybe Int)
     } deriving (Show)
 
 -- | Contains basic & networking parameters for running node.
@@ -44,4 +44,7 @@ data NodeParams = NodeParams
     , npReportServers :: ![Text]            -- ^ List of report server URLs
     , npUpdateParams  :: !UpdateParams      -- ^ Params for update system
     , npUseNTP        :: !Bool
+    , npEnableMetrics :: !Bool              -- ^ Gather runtime statistics.
+    , npEkgParams     :: !(Maybe EkgParams) -- ^ EKG statistics monitoring.
+    , npStatsdParams  :: !(Maybe StatsdParams) -- ^ statsd statistics backend.
     } deriving (Show)
