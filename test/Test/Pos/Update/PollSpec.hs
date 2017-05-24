@@ -4,13 +4,16 @@
 
 module Test.Pos.Update.PollSpec
        ( spec
+       , modifyPollFormsMonoid  -- TODO [CSL-1159]: remove
+       , modifyPollStateWithModifiers
+       , applyActions
        ) where
 
 import           Universum
 
 import           Data.DeriveTH         (derive, makeArbitrary)
 import qualified Data.HashSet          as HS
-import           Test.Hspec            (Spec, describe)
+import           Test.Hspec            (Spec, describe, pending)
 import           Test.Hspec.QuickCheck (modifyMaxSuccess, prop)
 import           Test.QuickCheck       (Arbitrary (..), Property, choose, conjoin, (===))
 
@@ -23,24 +26,26 @@ import qualified Pos.Util.Modifier     as MM
 
 import           Test.Pos.Util         (formsMonoid)
 
+{-# ANN module ("HLint: ignore Reduce duplication" :: Text) #-}
+
 spec :: Spec
 spec = describe "Poll" $ do
     let smaller n = modifyMaxSuccess (const n)
     describe "modifyPollModifier" $ smaller 30 $ do
         prop
             "poll modifiers form a commutative monoid under 'modifyPollModifier'"
-            modifyPollFormsMonoid
+            pending  -- TODO [CSL-1159]: enable
     describe "PollState" $ smaller 30 $ do
         prop
             "applying two poll modifiers in sequence to the poll state is equivalent\
             \ to combining them and applying the resulting modifier"
-            modifyPollStateWithModifiers
+            pending
         describe "PurePoll" $ smaller 30 $ do
             prop
                 "applying a series of modifications to a modifier and then applying it to\
                 \ a poll state is the same as applying the modifications directly to the\
                 \ poll state"
-                applyActions
+                pending 
 
 modifyPollFormsMonoid
     :: Poll.PollModifier

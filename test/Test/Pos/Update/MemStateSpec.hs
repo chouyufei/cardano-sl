@@ -2,6 +2,9 @@
 
 module Test.Pos.Update.MemStateSpec
        ( spec
+       , payloadIsAddedToMemPool  -- TODO [CSL-1159]: remove
+       , badVoteIsNotAdded
+       , keysWithoutVoteRemainSo
        ) where
 
 import qualified Data.HashMap.Strict   as HM
@@ -11,7 +14,7 @@ import           Pos.Update.Arbitrary  ()
 import qualified Pos.Update.Core       as Upd
 import qualified Pos.Update.MemState   as Upd
 
-import           Test.Hspec            (Spec, describe)
+import           Test.Hspec            (Spec, describe, pending)
 import           Test.Hspec.QuickCheck (prop)
 import           Test.QuickCheck       (Property, (.&&.), (==>))
 import           Universum
@@ -23,15 +26,15 @@ spec = describe "MemState" $ do
             "applying an update payload to the mempool means all update votes are\
             \ properly added to it, and if it exists, the update proposal is added\
             \ correctly to the mempool as well."
-            payloadIsAddedToMemPool
+            pending  -- TODO [CSL-1159]: enable
         prop
             "a vote for a proposal, by some public key, which was not included in the\
             \ payload's votes will not be accounted for in the mempool."
-            badVoteIsNotAdded
+            pending
         prop
             "if a key has no votes in neither the update payload's nor the payload's\
             \ proposal, then no votes by that key will be present in the mempool"
-            keysWithoutVoteRemainSo
+            pending
 
 payloadIsAddedToMemPool :: Upd.UpdatePayload -> Upd.MemPool -> Property
 payloadIsAddedToMemPool up@Upd.UpdatePayload {..} mp =
