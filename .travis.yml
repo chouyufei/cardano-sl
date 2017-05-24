@@ -30,9 +30,9 @@ before_install:
 
 script:
 - if [[ "$HLINT" == "true" ]]; then
-    nix-shell -p haskellPackages.hlint moreutils --run "util-scripts/lint.sh --nix | ts";
+    nix-shell -p haskellPackages.hlint moreutils --run "util-scripts/lint.sh --nix";
   else
-    nix-shell -p moreutils --run "./util-scripts/travis.sh | ts";
+    nix-shell -p moreutils --run "./util-scripts/travis.sh";
   fi
 
 deploy:
