@@ -25,7 +25,6 @@ import           Pos.Communication.Types.Protocol (HandlerSpec (..), PeerId (..)
 import           Pos.Delegation.Types             (ConfirmProxySK (..), SendProxySK (..))
 import           Pos.DHT.Model.Types              (meaningPartLength)
 import           Pos.Ssc.Class.Helpers            (SscHelpersClass)
-import           Pos.Ssc.Class.Types              (Ssc (..))
 import           Pos.Update.Network.Types         (ProposalMsgTag (..), VoteMsgTag (..))
 
 
@@ -95,7 +94,7 @@ instance Bi MsgGetBlocks where
     put (MsgGetBlocks f t) = put f >> put t
     get = label "MsgGetBlocks" $ MsgGetBlocks <$> get <*> get
 
-instance Ssc ssc => Bi (MsgHeaders ssc) where
+instance SscHelpersClass ssc => Bi (MsgHeaders ssc) where
     put (MsgHeaders b) = put b
     get = label "MsgHeaders" $ MsgHeaders <$> get
 

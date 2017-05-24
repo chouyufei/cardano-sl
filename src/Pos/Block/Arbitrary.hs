@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators       #-}
 
 module Pos.Block.Arbitrary
        ( HeaderAndParams (..)
@@ -52,25 +53,6 @@ instance (Arbitrary (SscProof ssc), Bi Raw, Ssc ssc) =>
                       , T.BlockPSignatureHeavy <$> arbitrary
                       ]
 
-properBlock
-    :: ( Arbitrary (T.BHeaderHash b)
-       , Arbitrary (BodyDependsOnConsensus b)
-       , Arbitrary (T.ConsensusData b)
-       , Arbitrary (T.ExtraBodyData b)
-       , Arbitrary (T.ExtraHeaderData b)
-       , T.Blockchain b)
-    => Gen (T.GenericBlock b)
-properBlock = do
-    (prevBlock, consensus, extra) <- arbitrary
-    BodyDependsOnConsensus {..} <- arbitrary
-    body <- genBodyDepsOnConsensus consensus
-    let proof = T.mkBodyProof body
-        header = T.GenericBlockHeader prevBlock proof consensus extra
-        construct h b =
-            either (error . mappend "mkGenericBlock: ") identity .
-            T.recreateGenericBlock h b
-    construct <$> pure header <*> pure body <*> arbitrary
-
 ------------------------------------------------------------------------------------------
 -- GenesisBlockchain
 ------------------------------------------------------------------------------------------
@@ -82,7 +64,7 @@ instance Arbitrary T.GenesisExtraBodyData where
     arbitrary = T.GenesisExtraBodyData <$> arbitrary
 
 instance Arbitrary (T.GenesisBlockHeader ssc) where
-    arbitrary = T.GenericBlockHeader
+    arbitrary = T.UnsafeGenericBlockHeader
         <$> arbitrary
         <*> arbitrary
         <*> arbitrary
@@ -102,20 +84,29 @@ instance Arbitrary (BodyDependsOnConsensus (T.GenesisBlockchain ssc)) where
 instance Arbitrary (T.Body (T.GenesisBlockchain ssc)) where
     arbitrary = T.GenesisBody <$> arbitrary
 
-instance Arbitrary (T.GenericBlock (T.GenesisBlockchain ssc)) where
-    arbitrary = properBlock
+instance ( Arbitrary $ SscProof ssc
+         , Arbitrary $ SscPayload ssc
+         , SscHelpersClass ssc
+         ) =>
+         Arbitrary (T.GenericBlock (T.GenesisBlockchain ssc)) where
+    arbitrary = T.mkGenesisBlock <$> arbitrary <*> arbitrary <*> arbitrary
 
 ------------------------------------------------------------------------------------------
 -- MainBlockchain
 ------------------------------------------------------------------------------------------
 
-instance (Arbitrary (SscProof ssc), Bi Raw, Ssc ssc) =>
-    Arbitrary (T.MainBlockHeader ssc) where
-    arbitrary = T.GenericBlockHeader
-        <$> arbitrary
-        <*> arbitrary
-        <*> arbitrary
-        <*> arbitrary
+instance ( Arbitrary (SscPayload ssc)
+         , Arbitrary (SscProof ssc)
+         , Bi Raw
+         , SscHelpersClass ssc
+         ) =>
+         Arbitrary (T.MainBlockHeader ssc) where
+    arbitrary =
+        T.mkMainHeader <$> arbitrary <*> arbitrary <*> arbitrary <*>
+        -- TODO: do not hardcode Nothing
+        pure Nothing <*>
+        arbitrary <*>
+        arbitrary
 
 instance Arbitrary h => Arbitrary (Attributes h) where
     arbitrary = Attributes
@@ -212,9 +203,20 @@ instance Arbitrary (SscPayload ssc) => Arbitrary (T.Body (T.MainBlockchain ssc))
         mpcUpload   <- arbitrary
         return $ T.MainBody txPayload mpcData mpcProxySKs mpcUpload
 
-instance (Arbitrary (SscProof ssc), Arbitrary (SscPayloadDependsOnSlot ssc), SscHelpersClass ssc) =>
-    Arbitrary (T.GenericBlock (T.MainBlockchain ssc)) where
-    arbitrary = properBlock
+instance ( Arbitrary $ SscPayload ssc
+         , Arbitrary $ SscProof ssc
+         , Arbitrary $ SscPayloadDependsOnSlot ssc
+         , SscHelpersClass ssc
+         ) =>
+         Arbitrary (T.GenericBlock (T.MainBlockchain ssc)) where
+    arbitrary = do
+        header <- arbitrary
+        BodyDependsOnConsensus {..} <- arbitrary
+        body <- genBodyDepsOnConsensus $ header ^. Core.gbhConsensus
+        let correctHeader = header & T.mainHeaderProof .~ T.mkBodyProof body
+        leftToPanic "arbitrary @MainBlock: " . T.recreateGenericBlock header body <$>
+        -- leftToPanic "arbitrary @MainBlock: " . T.mkMainBlock correctHeader body <$>
+            arbitrary
 
 ------------------------------------------------------------------------------------------
 -- Block network types
@@ -230,11 +232,16 @@ instance Arbitrary T.MsgGetBlocks where
         <$> arbitrary
         <*> arbitrary
 
-instance (Arbitrary (SscProof ssc), Bi Raw, Ssc ssc) => Arbitrary (T.MsgHeaders ssc) where
+instance (Arbitrary (SscPayload ssc), Arbitrary (SscProof ssc), Bi Raw, SscHelpersClass ssc) =>
+         Arbitrary (T.MsgHeaders ssc) where
     arbitrary = T.MsgHeaders <$> arbitrary
 
-instance (Arbitrary (SscProof ssc), Arbitrary (SscPayloadDependsOnSlot ssc), SscHelpersClass ssc) =>
-    Arbitrary (T.MsgBlock ssc) where
+instance ( Arbitrary $ SscPayload ssc
+         , Arbitrary (SscProof ssc)
+         , Arbitrary (SscPayloadDependsOnSlot ssc)
+         , SscHelpersClass ssc
+         ) =>
+         Arbitrary (T.MsgBlock ssc) where
     arbitrary = T.MsgBlock <$> arbitrary
 
 instance T.BiSsc ssc => Buildable (T.BlockHeader ssc, PublicKey) where
@@ -380,7 +387,6 @@ newtype HeaderAndParams ssc = HAndP
 instance (Arbitrary (SscPayload ssc), SscHelpersClass ssc) =>
     Arbitrary (HeaderAndParams ssc) where
     arbitrary = do
-        consensus <- arbitrary :: Gen Bool
         -- This integer is used as a seed to randomly choose a slot down below
         seed <- arbitrary :: Gen Int
         (headers, leaders) <- first reverse . getHeaderList <$> arbitrary
@@ -432,8 +438,7 @@ instance (Arbitrary (SscPayload ssc), SscHelpersClass ssc) =>
                     (view $ Core.gbhExtra . T.mehAttributes . to attrRemain)
                     header
             params = T.VerifyHeaderParams
-                { T.vhpVerifyConsensus = consensus
-                , T.vhpPrevHeader = prev
+                { T.vhpPrevHeader = prev
                 , T.vhpNextHeader = next
                 , T.vhpCurrentSlot = randomSlotBeforeThisHeader
                 , T.vhpLeaders = nonEmpty $ map T.addressHash thisHeadersEpoch
