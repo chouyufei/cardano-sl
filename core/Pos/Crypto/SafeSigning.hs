@@ -30,6 +30,7 @@ import           Data.ByteArray        (ByteArray, ByteArrayAccess, ScrubbedByte
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Lazy  as BSL
 import           Data.Coerce           (coerce)
+import           Data.Default          (def)
 import           Data.Text.Buildable   (build)
 import qualified Data.Text.Buildable   as B
 import qualified Prelude
@@ -69,13 +70,12 @@ emptyPassphrase :: PassPhrase
 emptyPassphrase = PassPhrase mempty
 
 -- | Parameters used to evaluate hash of passphrase.
--- They influence on resulting hash length, memory and time consumption.
 passScryptParam :: S.ScryptParams
 passScryptParam =
     fromMaybe (error "Bad passphrase scrypt parameters") $
-    S.scryptParamsLen 14 8 1 hashLen
-  where
-    hashLen = 32  -- maximal passphrase length
+    S.mkScryptParams def
+        { S.spHashLen = 32  -- maximal passphrase length
+        }
 
 -- | Wrap raw secret key, attaching hash to it.
 -- Hash is evaluated using given salt.
