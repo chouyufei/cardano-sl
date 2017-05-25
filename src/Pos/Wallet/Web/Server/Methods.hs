@@ -879,7 +879,7 @@ changeWSetPassphrase sa wsAddr oldCPass newCPass = do
     oldPass <- decodeCPassPhraseOrFail oldCPass
     newPass <- decodeCPassPhraseOrFail newCPass
     oldSK   <- getSKByAddr wsAddr
-    newSK   <- maybeThrow badPass $ changeEncPassphrase oldPass newPass oldSK
+    newSK   <- maybeThrow badPass =<< changeEncPassphrase oldPass newPass oldSK
 
     -- TODO [CSM-236]: test on oldWSAddr == newWSAddr
     addSecretKey newSK

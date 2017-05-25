@@ -29,8 +29,9 @@ import qualified Data.ByteString.Lazy         as BSL
 import           Universum
 
 import           Pos.Binary.Class             (Bi, decodeFull, encodeStrict)
-import           Pos.Crypto.Hashing           (hash)
-import           Pos.Crypto.SafeSigning       (EncryptedSecretKey (..), PassPhrase)
+import           Pos.Crypto.SafeSigning       (EncryptedSecretKey (..), PassPhrase,
+                                               checkPassMatches, mkEncSecretWithSalt)
+import           Pos.Crypto.Scrypt            (EncryptedPass, mkSalt)
 import           Pos.Crypto.Signing           (PublicKey (..))
 
 -- | Passphrase is a hash of root public key.
@@ -91,18 +92,15 @@ deriveHDPublicKey (PublicKey xpub) childIndex
 -- | Derive secret key from secret key.
 -- If @childIndex <= maxHardened@ key will be deriving hardened way, otherwise non-hardened.
 deriveHDSecretKey
-    :: Bi PassPhrase
+    :: (Bi PassPhrase, Bi EncryptedPass)
     => PassPhrase -> EncryptedSecretKey -> Word32 -> Maybe EncryptedSecretKey
-deriveHDSecretKey passPhrase (EncryptedSecretKey xprv pph) childIndex
-    | hash passPhrase /= pph = Nothing
-    | childIndex <= maxHardened = Just $
-        EncryptedSecretKey
-            (deriveXPrvHardened passPhrase xprv childIndex)
-            pph
-    | otherwise = Just $
-        EncryptedSecretKey
-            (deriveXPrv passPhrase xprv (childIndex - maxHardened - 1))
-            pph
+deriveHDSecretKey passPhrase sk@(EncryptedSecretKey xprv pph) childIndex =
+    checkPassMatches passPhrase sk $>
+    if childIndex <= maxHardened
+        then mkEncSecretWithSalt (mkSalt pph) passPhrase $
+             deriveXPrvHardened passPhrase xprv childIndex
+        else mkEncSecretWithSalt (mkSalt pph) passPhrase $
+             deriveXPrv passPhrase xprv (childIndex - maxHardened - 1)
 
 addrAttrNonce :: ByteString
 addrAttrNonce = "serokellfore"

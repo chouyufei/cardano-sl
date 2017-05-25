@@ -28,6 +28,7 @@ import           Pos.Crypto.HD            (HDAddressPayload (..))
 import           Pos.Crypto.RedeemSigning (RedeemPublicKey (..), RedeemSecretKey (..),
                                            RedeemSignature (..))
 import           Pos.Crypto.SafeSigning   (EncryptedSecretKey (..), PassPhrase)
+import           Pos.Crypto.Scrypt        (EncryptedPass (..))
 import           Pos.Crypto.SecretSharing (EncShare (..), Secret (..), SecretProof (..),
                                            SecretSharingExtra (..), Share (..),
                                            VssKeyPair (..), VssPublicKey (..))
@@ -209,6 +210,10 @@ instance Bi PassPhrase where
     get = label "PassPhrase" $
           ByteArray.pack . BS.unpack <$>
               (getByteString passphraseLength <|> getByteString 0)
+
+instance Bi EncryptedPass where
+    put (EncryptedPass ep) = put ep
+    get = EncryptedPass <$> get
 
 -------------------------------------------------------------------------------
 -- Hierarchical derivation
