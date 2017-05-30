@@ -18,22 +18,29 @@ module Pos.Update.Logic.Local
        , usNormalize
        , processNewSlot
        , usPreparePayload
+
+       , clearUSMemPool
        ) where
+
+import           Universum
 
 import           Control.Concurrent.STM (modifyTVar', readTVar, writeTVar)
 import           Control.Monad.Except   (runExceptT)
 import           Data.Default           (Default (def))
 import qualified Data.HashMap.Strict    as HM
 import qualified Data.HashSet           as HS
+import qualified Ether
 import           Formatting             (sformat, (%))
 import           System.Wlog            (WithLogger, logWarning)
-import           Universum
 
+import           Pos.Binary.Class       (biSize)
+import           Pos.Constants          (memPoolLimitRatio)
+import           Pos.Core               (BlockVersionData (bvdMaxBlockSize), HeaderHash,
+                                         SlotId (..), slotIdF)
 import           Pos.Crypto             (PublicKey)
-import           Pos.DB.Class           (MonadDB)
+import           Pos.DB.Class           (MonadDB, MonadDBPure)
 import qualified Pos.DB.GState          as DB
 import           Pos.Lrc.Context        (LrcContext)
-import           Pos.Types              (HeaderHash, SlotId (..), slotIdF)
 import           Pos.Update.Context     (UpdateContext (..))
 import           Pos.Update.Core        (UpId, UpdatePayload (..), UpdateProposal,
                                          UpdateVote (..), canCombineVotes)
@@ -44,38 +51,107 @@ import           Pos.Update.Poll        (MonadPoll (deactivateProposal),
                                          MonadPollRead (getProposal), PollModifier,
                                          PollVerFailure, evalPollT, execPollT,
                                          filterProposalsByThd, modifyPollModifier,
-                                         normalizePoll, psVotes, runDBPoll, runPollT,
-                                         verifyAndApplyUSPayload)
-import           Pos.Util.Context       (HasContext, askContext)
+                                         normalizePoll, psVotes, refreshPoll, runDBPoll,
+                                         runPollT, verifyAndApplyUSPayload)
 
 -- MonadMask is needed because are using Lock. It can be improved later.
 type USLocalLogicMode m =
-    ( MonadDB m, MonadMask m
+    ( MonadDB m
+    , MonadDBPure m
+    , MonadMask m
     , WithLogger m
-    , HasContext UpdateContext m, HasContext LrcContext m
+    , Ether.MonadReader' UpdateContext m
+    , Ether.MonadReader' LrcContext m
     )
 
 getMemPool
-    :: (HasContext UpdateContext m, MonadIO m)
+    :: (Ether.MonadReader' UpdateContext m, MonadIO m)
     => m MemPool
 getMemPool = msPool <$>
-    (atomically . readTVar . mvState =<< askContext ucMemState)
+    (atomically . readTVar . mvState =<< Ether.asks' ucMemState)
+
+clearUSMemPool
+    :: (Ether.MonadReader' UpdateContext m, MonadIO m)
+    => m ()
+clearUSMemPool =
+    atomically . flip modifyTVar' resetData . mvState =<< Ether.asks' ucMemState
+  where
+    resetData memState = memState {msPool = def, msModifier = def}
 
 getPollModifier
-    :: (HasContext UpdateContext m, MonadIO m)
+    :: (Ether.MonadReader' UpdateContext m, MonadIO m)
     => m PollModifier
 getPollModifier = msModifier <$>
-    (atomically . readTVar . mvState =<< askContext ucMemState)
+    (atomically . readTVar . mvState =<< Ether.asks' ucMemState)
 
 getLocalProposals
-    :: (HasContext UpdateContext m, MonadIO m)
+    :: (Ether.MonadReader' UpdateContext m, MonadIO m)
     => m UpdateProposals
 getLocalProposals = mpProposals <$> getMemPool
 
 getLocalVotes
-    :: (HasContext UpdateContext m, MonadIO m)
+    :: (Ether.MonadReader' UpdateContext m, MonadIO m)
     => m LocalVotes
 getLocalVotes = mpLocalVotes <$> getMemPool
+
+withCurrentTip
+    :: (Ether.MonadReader' UpdateContext m, MonadDB m, MonadDBPure m)
+    => (MemState -> m MemState) -> m ()
+withCurrentTip action = do
+    tipBefore <- DB.getTip
+    stateVar <- mvState <$> Ether.asks' ucMemState
+    ms <- atomically $ readTVar stateVar
+    newMS <- action ms
+    atomically $ modifyTVar' stateVar $ \cur ->
+      if | tipBefore == msTip cur -> newMS
+         | otherwise -> cur
+
+----------------------------------------------------------------------------
+-- Data exchange in general
+----------------------------------------------------------------------------
+
+processSkeleton
+    :: (USLocalLogicMode m)
+    => UpdatePayload -> m (Either PollVerFailure ())
+processSkeleton payload =
+    withUSLock $
+    runExceptT $
+    withCurrentTip $ \ms@MemState {..} -> do
+        maxBlockSize <- bvdMaxBlockSize <$> DB.getAdoptedBVData
+        let maxMemPoolSize = maxBlockSize * memPoolLimitRatio
+        msIntermediate <-
+            if | maxMemPoolSize >= mpSize msPool -> refreshMemPool ms
+               | otherwise -> pure ms
+        processSkeletonDo msIntermediate
+  where
+    processSkeletonDo ms@MemState {..} = do
+        modifier <-
+            runDBPoll . evalPollT msModifier . execPollT def $
+            verifyAndApplyUSPayload True (Left msSlot) payload
+        let newModifier = modifyPollModifier msModifier modifier
+        let newPool = addToMemPool payload msPool
+        pure $ ms {msModifier = newModifier, msPool = newPool}
+
+-- Remove most useless data from mem pool to make it smaller.
+refreshMemPool
+    :: ( MonadDB m
+       , MonadDBPure m
+       , Ether.MonadReader' UpdateContext m
+       , Ether.MonadReader' LrcContext m
+       , WithLogger m
+       )
+    => MemState -> m MemState
+refreshMemPool ms@MemState {..} = do
+    let MemPool {..} = msPool
+    ((newProposals, newVotes), newModifier) <-
+        runDBPoll . runPollT def $ refreshPoll msSlot mpProposals mpLocalVotes
+    let newPool =
+            MemPool
+            { mpProposals = newProposals
+            , mpLocalVotes = newVotes
+            , mpSize = biSize newProposals + biSize newVotes
+            }
+    return ms {msModifier = newModifier, msPool = newPool}
 
 ----------------------------------------------------------------------------
 -- Proposals
@@ -84,13 +160,13 @@ getLocalVotes = mpLocalVotes <$> getMemPool
 -- | This function returns true if update proposal with given
 -- identifier should be requested.
 isProposalNeeded
-    :: (HasContext UpdateContext m, MonadIO m)
+    :: (Ether.MonadReader' UpdateContext m, MonadIO m)
     => UpId -> m Bool
 isProposalNeeded id = not . HM.member id <$> getLocalProposals
 
 -- | Get update proposal with given id if it is known.
 getLocalProposalNVotes
-    :: (HasContext UpdateContext m, MonadIO m)
+    :: (Ether.MonadReader' UpdateContext m, MonadIO m)
     => UpId -> m (Maybe (UpdateProposal, [UpdateVote]))
 getLocalProposalNVotes id = do
     prop <- HM.lookup id <$> getLocalProposals
@@ -138,7 +214,7 @@ isVoteNeeded propId pk decision = do
 -- | Get update vote for proposal with given id from given issuer and
 -- with given decision if it is known.
 getLocalVote
-    :: (HasContext UpdateContext m, MonadIO m)
+    :: (Ether.MonadReader' UpdateContext m, MonadIO m)
     => UpId -> PublicKey -> Bool -> m (Maybe UpdateVote)
 getLocalVote propId pk decision = do
     voteMaybe <- lookupVote propId pk <$> getLocalVotes
@@ -160,29 +236,6 @@ processVote
     => UpdateVote -> m (Either PollVerFailure ())
 processVote vote = processSkeleton $ UpdatePayload Nothing [vote]
 
-withCurrentTip
-    :: (HasContext UpdateContext m, MonadDB m)
-    => (MemState -> m MemState) -> m ()
-withCurrentTip action = do
-    tipBefore <- DB.getTip
-    stateVar <- mvState <$> askContext ucMemState
-    ms <- atomically $ readTVar stateVar
-    newMS <- action ms
-    atomically $ modifyTVar' stateVar $ \cur ->
-      if | tipBefore == msTip cur -> newMS
-         | otherwise -> cur
-
-processSkeleton
-    :: (USLocalLogicMode m)
-    => UpdatePayload -> m (Either PollVerFailure ())
-processSkeleton payload = withUSLock $ runExceptT $ withCurrentTip $ \ms@MemState{..} -> do
-    modifier <-
-        runDBPoll . evalPollT msModifier . execPollT def $
-        verifyAndApplyUSPayload True (Left msSlot) payload
-    let newModifier = modifyPollModifier msModifier modifier
-    let newPool = addToMemPool payload msPool
-    pure $ ms {msModifier = newModifier, msPool = newPool}
-
 ----------------------------------------------------------------------------
 -- Normalization and related
 ----------------------------------------------------------------------------
@@ -195,7 +248,7 @@ usNormalize :: (USLocalLogicMode m) => m ()
 usNormalize =
     withUSLock $ do
         tip <- DB.getTip
-        stateVar <- mvState <$> askContext ucMemState
+        stateVar <- mvState <$> Ether.asks' ucMemState
         atomically . writeTVar stateVar =<< usNormalizeDo (Just tip) Nothing
 
 -- Normalization under lock.
@@ -203,15 +256,19 @@ usNormalizeDo
     :: (USLocalLogicMode m)
     => Maybe HeaderHash -> Maybe SlotId -> m MemState
 usNormalizeDo tip slot = do
-    stateVar <- mvState <$> askContext ucMemState
+    stateVar <- mvState <$> Ether.asks' ucMemState
     ms@MemState {..} <- atomically $ readTVar stateVar
-    let mp@MemPool {..} = msPool
+    let MemPool {..} = msPool
     ((newProposals, newVotes), newModifier) <-
-        runDBPoll . runPollT def $
-        normalizePoll msSlot mpProposals mpLocalVotes
+        runDBPoll . runPollT def $ normalizePoll msSlot mpProposals mpLocalVotes
     let newTip = fromMaybe msTip tip
     let newSlot = fromMaybe msSlot slot
-    let newPool = mp {mpProposals = newProposals, mpLocalVotes = newVotes}
+    let newPool =
+            MemPool
+            { mpProposals = newProposals
+            , mpLocalVotes = newVotes
+            , mpSize = biSize newProposals + biSize newVotes
+            }
     let newMS =
             ms
             { msModifier = newModifier

@@ -76,7 +76,7 @@ function dht_key {
 
 function peer_config {
   local j=$1
-  echo -n " --kademlia-peer 127.0.0.1:"`get_port $j`'/'`dht_key $j`
+  echo -n " --kademlia-peer 127.0.0.1:"`get_port $j`
 }
 
 function dht_config {
@@ -110,7 +110,6 @@ function node_cmd {
   local wallet_args=$5
   local kademlia_dump_path=$6
   local system_start=$7
-  local peer_id=$8
   local st=''
   local reb=''
   local no_ntp=''
@@ -164,7 +163,6 @@ function node_cmd {
   echo -n " $wallet_args "
   echo -n " --kademlia-dump-path  $(dump_path $kademlia_dump_path)"
   echo -n " --system-start $system_start"
-  echo -n " --peer-id $peer_id"
   # echo -n " --monitor-port $monitor_port +RTS -T -RTS "
   echo ''
 }

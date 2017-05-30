@@ -56,6 +56,7 @@ library
                         Pos.Communication.BiP
                         Pos.Communication.Limits.Types
                         Pos.Communication.Limits.Instances
+                        Pos.Communication.Listener
                         Pos.Communication.MessagePart
                         Pos.Communication.PeerState
                         Pos.Communication.Protocol
@@ -97,7 +98,7 @@ library
                       , containers
                       , data-default
                       , directory
-                      , ether
+                      , ether >= 0.5
                       , exceptions
                       , filepath
                       , formatting

@@ -6,24 +6,25 @@ module Pos.Txp.Toil.Trans
        , runToilTLocal
        , execToilTLocal
        , runToilTLocalExtra
+       , evalToilTEmpty
        ) where
 
-import           Control.Lens                 (at, to, (%=), (+=), (.=))
-import qualified Control.Monad.Ether.Implicit as Ether
-import           Data.Default                 (Default (def))
-import qualified Data.HashMap.Strict          as HM
+import           Control.Lens        (at, to, (%=), (+=), (.=))
+import           Data.Default        (Default (def))
+import qualified Data.HashMap.Strict as HM
+import qualified Ether
 import           Universum
 
-import           Pos.Txp.Toil.Class           (MonadBalances (..), MonadBalancesRead (..),
-                                               MonadTxPool (..), MonadUtxo (..),
-                                               MonadUtxoRead (..))
-import           Pos.Txp.Toil.Types           (GenericToilModifier (..), MemPool,
-                                               ToilModifier, UndoMap, UtxoModifier,
-                                               bvStakes, bvTotal, mpLocalTxs,
-                                               mpLocalTxsSize, tmBalances, tmMemPool,
-                                               tmUndos, tmUtxo)
-import           Pos.Util                     (ether)
-import qualified Pos.Util.Modifier            as MM
+import           Pos.Binary.Class    (biSize)
+import           Pos.Txp.Toil.Class  (MonadBalances (..), MonadBalancesRead (..),
+                                      MonadTxPool (..), MonadUtxo (..),
+                                      MonadUtxoRead (..))
+import           Pos.Txp.Toil.Types  (GenericToilModifier (..), MemPool, ToilModifier,
+                                      UndoMap, UtxoModifier, bvStakes, bvTotal,
+                                      mpLocalTxs, mpSize, tmBalances, tmMemPool, tmUndos,
+                                      tmUtxo)
+import           Pos.Util            (ether)
+import qualified Pos.Util.Modifier   as MM
 
 ----------------------------------------------------------------------------
 -- Tranformer
@@ -35,7 +36,7 @@ import qualified Pos.Util.Modifier            as MM
 -- [WARNING] This transformer uses StateT and is intended for
 -- single-threaded usage only.
 -- Used for block application now.
-type ToilT ext m = Ether.StateT (GenericToilModifier ext) m
+type ToilT ext m = Ether.StateT' (GenericToilModifier ext) m
 
 instance MonadUtxoRead m => MonadUtxoRead (ToilT __ m) where
     utxoGet id = ether $ MM.lookupM utxoGet id =<< use tmUtxo
@@ -62,10 +63,10 @@ instance Monad m => MonadTxPool (ToilT __ m) where
         has <- use $ tmMemPool . mpLocalTxs . to (HM.member id)
         unless has $ do
             tmMemPool . mpLocalTxs . at id .= Just tx
-            tmMemPool . mpLocalTxsSize += 1
+            tmMemPool . mpSize += biSize tx + biSize id
             tmUndos . at id .= Just undo
 
-    poolSize = ether $ use $ tmMemPool . mpLocalTxsSize
+    poolSize = ether $ use $ tmMemPool . mpSize
 
 ----------------------------------------------------------------------------
 -- Runners
@@ -76,7 +77,7 @@ instance Monad m => MonadTxPool (ToilT __ m) where
 runToilTGlobal
     :: (Default ext, Functor m)
     => ToilT ext m a -> m (a, GenericToilModifier ext)
-runToilTGlobal txpt = Ether.runStateT txpt def
+runToilTGlobal txpt = Ether.runStateT' txpt def
 
 -- | Run ToilT using empty balances modifier. Should be used for local
 -- transaction processing.
@@ -88,7 +89,13 @@ runToilTLocal
     -> ToilT () m a
     -> m (a, ToilModifier)
 runToilTLocal um mp undo txpt =
-    Ether.runStateT txpt (def {_tmUtxo = um, _tmMemPool = mp, _tmUndos = undo})
+    Ether.runStateT' txpt (def {_tmUtxo = um, _tmMemPool = mp, _tmUndos = undo})
+
+evalToilTEmpty
+    :: Monad m
+    => ToilT () m a
+    -> m a
+evalToilTEmpty txpt = Ether.evalStateT txpt def
 
 -- | Execute ToilT using empty balances modifier. Should be used for
 -- local transaction processing.
@@ -98,7 +105,7 @@ execToilTLocal
     -> MemPool
     -> UndoMap
     -> ToilT () m a
-    -> m (ToilModifier)
+    -> m ToilModifier
 execToilTLocal um mp undo = fmap snd . runToilTLocal um mp undo
 
 -- | Like 'runToilTLocal', but takes extra data as argument.
@@ -111,7 +118,7 @@ runToilTLocalExtra
     -> ToilT extra m a
     -> m (a, GenericToilModifier extra)
 runToilTLocalExtra um mp undo e =
-    flip Ether.runStateT $
+    flip Ether.runStateT' $
         ToilModifier
         { _tmUtxo = um
         , _tmBalances = def

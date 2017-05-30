@@ -11,9 +11,11 @@ category:            Currency
 build-type:          Simple
 cabal-version:       >=1.10
 data-files:
-  constants-dev.yaml
-  constants-prod.yaml
-  constants-wallet-prod.yaml
+  constants.yaml
+
+flag asserts
+  default:     True
+  manual:      True
 
 flag dev-mode
   default:     True
@@ -35,7 +37,9 @@ library
                        Pos.Core.Class
                        Pos.Core.Coin
                        Pos.Core.Constants
+                       Pos.Core.Genesis
                        Pos.Core.Script
+                       Pos.Core.SharedSeed
                        Pos.Core.Slotting
                        Pos.Core.Timestamp
                        Pos.Core.Types
@@ -61,6 +65,7 @@ library
                        Pos.Binary.Crypto
                        Pos.Binary.Core
                        Pos.Binary.Core.Address
+                       Pos.Binary.Core.Block
                        Pos.Binary.Core.Coin
                        Pos.Binary.Core.Script
                        Pos.Binary.Core.Types
@@ -68,28 +73,31 @@ library
 
                        Pos.Util.Chrono
                        Pos.Util.Config
-                       Pos.Util.Context
                        Pos.Util.HVect
                        Pos.Util.Iterator
+                       Pos.Util.Limits
+                       Pos.Util.LRU
+                       Pos.Util.Mnemonics
                        Pos.Util.Modifier
                        Pos.Util.Util
-                       Pos.Util.Mnemonics
 
   other-modules:       Pos.Util.Config.Path
+                       Pos.Util.Config.Get
 
   build-depends:      QuickCheck
                     , aeson
                     , autoexporter
                     , base
                     , base58-bytestring
-                    , ether
-                    , ether
+                    , concurrent-extra
+                    , ether >= 0.5
                     , log-warper >= 1.0.3
+                    , mmorph
+                    , resourcet
+                    , stm
                     , transformers
                     , transformers-base
                     , transformers-lift
-                    , mmorph
-                    , resourcet
                       -- This constraint on 'binary' is so strict because
                       -- we're relying on the internal representation of
                       -- 'Get' in Pos.Binary.Class. So, if you need to bump
@@ -114,6 +122,7 @@ library
                      , formatting
                      , hashable
                      , lens
+                     , lrucache
                      , memory
                      , mtl
                      , node-sketch
@@ -166,7 +175,9 @@ library
 
   build-tools: cpphs >= 1.19
   ghc-options: -pgmP cpphs -optP --cpp
+  if flag(asserts)
+    cpp-options: -DASSERTS_ON
   if flag(dev-mode)
-    cpp-options: -DDEV_MODE
+    cpp-options: -DDEV_MODE -DCONFIG=dev
   if flag(embed-config) || !flag(dev-mode)
     cpp-options: -DEMBED_CONFIG

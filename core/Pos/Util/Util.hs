@@ -1,9 +1,10 @@
-{-# LANGUAGE GADTs                #-}
-{-# LANGUAGE PolyKinds            #-}
-{-# LANGUAGE RankNTypes           #-}
-{-# LANGUAGE ScopedTypeVariables  #-}
-{-# LANGUAGE TemplateHaskell      #-}
-{-# LANGUAGE TypeFamilies         #-}
+{-# LANGUAGE CPP                 #-}
+{-# LANGUAGE GADTs               #-}
+{-# LANGUAGE PolyKinds           #-}
+{-# LANGUAGE RankNTypes          #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
+{-# LANGUAGE TypeFamilies        #-}
 
 module Pos.Util.Util
        (
@@ -15,11 +16,35 @@ module Pos.Util.Util
        , liftGetterSome
 
        , maybeThrow
+       , eitherToFail
        , getKeys
+       , sortWithMDesc
+       , leftToPanic
+
+       -- * Lenses
+       , _neHead
+       , _neTail
+       , _neLast
 
        -- * Ether
        , ether
        , Ether.TaggedTrans
+
+       -- * Lifting monads
+       , PowerLift(..)
+
+       -- * Asserts
+       , inAssertMode
+
+       -- * Concurrency
+       , clearMVar
+       , forcePutMVar
+       , readMVarConditional
+       , readUntilEqualMVar
+       , readTVarConditional
+       , readUntilEqualTVar
+       , withReadLifted
+       , withWriteLifted
 
        -- * Instances
        -- ** Lift Byte
@@ -46,33 +71,39 @@ module Pos.Util.Util
        -- *** HasLoggerName Ether.StateT
        ) where
 
-import           Control.Lens                     (ALens', Getter, Getting, cloneLens, to)
-import           Control.Monad.Base               (MonadBase)
-import qualified Control.Monad.Ether              as Ether
-import           Control.Monad.Morph              (MFunctor (..))
-import           Control.Monad.Trans.Class        (MonadTrans)
-import qualified Control.Monad.Trans.Ether.Tagged as Ether
-import           Control.Monad.Trans.Identity     (IdentityT (..))
-import           Control.Monad.Trans.Lift.Local   (LiftLocal (..))
-import           Control.Monad.Trans.Resource     (MonadResource(..))
-import           Data.Aeson                       (FromJSON (..), ToJSON (..))
-import           Data.HashSet                     (fromMap)
-import           Data.Text.Buildable              (build)
-import           Data.Time.Units                  (Attosecond, Day, Femtosecond,
-                                                   Fortnight, Hour, Microsecond,
-                                                   Millisecond, Minute, Nanosecond,
-                                                   Picosecond, Second, Week,
-                                                   toMicroseconds)
-import qualified Language.Haskell.TH.Syntax       as TH
-import           Mockable                         (ChannelT, Counter, Distribution, Gauge,
-                                                   MFunctor' (..), Mockable (..), Promise,
-                                                   SharedAtomicT, SharedExclusiveT,
-                                                   ThreadId)
-import qualified Prelude
-import           Serokell.Data.Memory.Units       (Byte, fromBytes, toBytes)
-import           System.Wlog                      (CanLog, HasLoggerName (..),
-                                                   LoggerNameBox (..))
 import           Universum
+import           Unsafe                         (unsafeInit, unsafeLast)
+
+import           Control.Concurrent.ReadWriteLock (RWLock, acquireRead, acquireWrite,
+                                                   releaseRead, releaseWrite)
+import           Control.Lens                   (ALens', Getter, Getting, cloneLens, to)
+import           Control.Monad.Base             (MonadBase)
+import           Control.Monad.Morph            (MFunctor (..))
+import           Control.Monad.STM              (retry)
+import           Control.Monad.Trans.Class      (MonadTrans)
+import           Control.Monad.Trans.Identity   (IdentityT (..))
+import           Control.Monad.Trans.Lift.Local (LiftLocal (..))
+import           Control.Monad.Trans.Resource   (MonadResource (..))
+import           Data.Aeson                     (FromJSON (..), ToJSON (..))
+import           Data.HashSet                   (fromMap)
+import           Data.Tagged                    (Tagged (Tagged))
+import           Data.Text.Buildable            (build)
+import           Data.Time.Units                (Attosecond, Day, Femtosecond, Fortnight,
+                                                 Hour, Microsecond, Millisecond, Minute,
+                                                 Nanosecond, Picosecond, Second, Week,
+                                                 toMicroseconds)
+import           Data.Typeable                  (typeRep)
+import qualified Ether
+import qualified Formatting                     as F
+import qualified Language.Haskell.TH.Syntax     as TH
+import           Mockable                       (ChannelT, Counter, Distribution, Gauge,
+                                                 MFunctor' (..), Mockable (..), Promise,
+                                                 SharedAtomicT, SharedExclusiveT,
+                                                 ThreadId)
+import qualified Prelude
+import           Serokell.Data.Memory.Units     (Byte, fromBytes, toBytes)
+import           System.Wlog                    (CanLog, HasLoggerName (..),
+                                                 LoggerNameBox (..))
 
 ----------------------------------------------------------------------------
 -- Some
@@ -198,12 +229,16 @@ instance
   where
     liftMockable dmt = IdentityT $ liftMockable $ hoist' runIdentityT dmt
 
+unTaggedTrans :: Ether.TaggedTrans tag t m a -> t m a
+unTaggedTrans (Ether.TaggedTrans tma) = tma
+
 instance
       (Mockable d (t m), Monad (t m),
        MFunctor' d (Ether.TaggedTrans tag t m) (t m)) =>
           Mockable d (Ether.TaggedTrans tag t m)
   where
-    liftMockable dmt = Ether.pack $ liftMockable $ hoist' Ether.unpack dmt
+    liftMockable dmt =
+      Ether.TaggedTrans $ liftMockable $ hoist' unTaggedTrans dmt
 
 type instance ThreadId (IdentityT m) = ThreadId m
 type instance Promise (IdentityT m) = Promise m
@@ -230,11 +265,129 @@ type instance ChannelT (Ether.TaggedTrans tag t m) = ChannelT m
 maybeThrow :: (MonadThrow m, Exception e) => e -> Maybe a -> m a
 maybeThrow e = maybe (throwM e) pure
 
+-- | Fail or return result depending on what is stored in 'Either'.
+eitherToFail :: (MonadFail m, ToString s) => Either s a -> m a
+eitherToFail = either (fail . toString) pure
+
 -- | Create HashSet from HashMap's keys
 getKeys :: HashMap k v -> HashSet k
 getKeys = fromMap . void
 
+-- | Use some monadic action to evaluate priority of value and sort a
+-- list of values based on this priority. The order is descending
+-- because I need it.
+sortWithMDesc :: (Monad m, Ord b) => (a -> m b) -> [a] -> m [a]
+sortWithMDesc f = fmap (map fst . sortWith (Down . snd)) . mapM f'
+  where
+    f' x = (x, ) <$> f x
+
+-- | Partial function which calls 'error' with meaningful message if
+-- given 'Left' and returns some value if given 'Right'.
+-- Intended usage is when you're sure that value must be right.
+leftToPanic :: Buildable a => Text -> Either a b -> b
+leftToPanic msgPrefix = either (error . mappend msgPrefix . pretty) identity
+
 -- | Make a Reader or State computation work in an Ether transformer. Useful
 -- to make lenses work with Ether.
 ether :: trans m a -> Ether.TaggedTrans tag trans m a
-ether = Ether.pack
+ether = Ether.TaggedTrans
+
+class PowerLift m n where
+  powerLift :: m a -> n a
+
+instance {-# OVERLAPPING #-} PowerLift m m where
+  powerLift = identity
+
+instance (MonadTrans t, PowerLift m n, Monad n) => PowerLift m (t n) where
+  powerLift = lift . powerLift @m @n
+
+instance (Typeable s, Buildable a) => Buildable (Tagged s a) where
+    build tt@(Tagged v) = F.bprint ("Tagged " F.% F.shown F.% " " F.% F.build) ts v
+      where
+        ts = typeRep proxy
+        proxy = (const Proxy :: Tagged s a -> Proxy s) tt
+
+-- | This function performs checks at compile-time for different actions.
+-- May slowdown implementation. To disable such checks (especially in benchmarks)
+-- one should compile with: @stack build --flag cardano-sl-core:-asserts@
+inAssertMode :: Applicative m => m a -> m ()
+#ifdef ASSERTS_ON
+inAssertMode x = x *> pure ()
+#else
+inAssertMode _ = pure ()
+#endif
+{-# INLINE inAssertMode #-}
+
+----------------------------------------------------------------------------
+-- Lenses
+----------------------------------------------------------------------------
+
+-- | Lens for the head of 'NonEmpty'.
+--
+-- We can't use '_head' because it doesn't work for 'NonEmpty':
+-- <https://github.com/ekmett/lens/issues/636#issuecomment-213981096>.
+-- Even if we could though, it wouldn't be a lens, only a traversal.
+_neHead :: Lens' (NonEmpty a) a
+_neHead f (x :| xs) = (:| xs) <$> f x
+
+-- | Lens for the tail of 'NonEmpty'.
+_neTail :: Lens' (NonEmpty a) [a]
+_neTail f (x :| xs) = (x :|) <$> f xs
+
+-- | Lens for the last element of 'NonEmpty'.
+_neLast :: Lens' (NonEmpty a) a
+_neLast f (x :| []) = (:| []) <$> f x
+_neLast f (x :| xs) = (\y -> x :| unsafeInit xs ++ [y]) <$> f (unsafeLast xs)
+
+----------------------------------------------------------------------------
+-- Concurrency utilites (MVar/TVar/RWLock..)
+----------------------------------------------------------------------------
+
+clearMVar :: MonadIO m => MVar a -> m ()
+clearMVar = void . tryTakeMVar
+
+forcePutMVar :: MonadIO m => MVar a -> a -> m ()
+forcePutMVar mvar val = do
+    unlessM (tryPutMVar mvar val) $ do
+        _ <- tryTakeMVar mvar
+        forcePutMVar mvar val
+
+-- | Block until value in MVar satisfies given predicate. When value
+-- satisfies, it is returned.
+readMVarConditional :: (MonadIO m) => (x -> Bool) -> MVar x -> m x
+readMVarConditional predicate mvar = do
+    rData <- readMVar mvar -- first we try to read for optimization only
+    if predicate rData then pure rData
+    else do
+        tData <- takeMVar mvar         -- now take data
+        if predicate tData then do     -- check again
+            _ <- tryPutMVar mvar tData -- try to put taken value
+            pure tData
+        else
+            readMVarConditional predicate mvar
+
+-- | Read until value is equal to stored value comparing by some function.
+readUntilEqualMVar
+    :: (Eq a, MonadIO m)
+    => (x -> a) -> MVar x -> a -> m x
+readUntilEqualMVar f mvar expVal = readMVarConditional ((expVal ==) . f) mvar
+
+-- | Block until value in TVar satisfies given predicate. When value
+-- satisfies, it is returned.
+readTVarConditional :: (MonadIO m) => (x -> Bool) -> TVar x -> m x
+readTVarConditional predicate tvar = atomically $ do
+    res <- readTVar tvar
+    if predicate res then pure res
+    else retry
+
+-- | Read until value is equal to stored value comparing by some function.
+readUntilEqualTVar
+    :: (Eq a, MonadIO m)
+    => (x -> a) -> TVar x -> a -> m x
+readUntilEqualTVar f tvar expVal = readTVarConditional ((expVal ==) . f) tvar
+
+withReadLifted :: (MonadIO m, MonadMask m) => RWLock -> m a -> m a
+withReadLifted l = bracket_ (liftIO $ acquireRead l) (liftIO $ releaseRead l)
+
+withWriteLifted :: (MonadIO m, MonadMask m) => RWLock -> m a -> m a
+withWriteLifted l = bracket_ (liftIO $ acquireWrite l) (liftIO $ releaseWrite l)

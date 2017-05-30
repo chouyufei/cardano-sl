@@ -14,15 +14,17 @@ module Pos.Txp.Toil.Class
        , MonadTxPool (..)
        ) where
 
-import           Control.Lens                 (at, (.=))
-import qualified Control.Monad.Ether.Implicit as Ether
-import           Control.Monad.Trans.Class    (MonadTrans)
 import           Universum
 
-import           Pos.Core                     (Coin, StakeholderId)
-import           Pos.Txp.Core.Types           (TxAux, TxId, TxIn, TxOutAux, TxUndo)
-import           Pos.Txp.Toil.Types           (ToilEnv, Utxo)
-import           Pos.Util                     (ether)
+import           Control.Lens               (at, (.=))
+import           Control.Monad.Trans.Class  (MonadTrans)
+import qualified Ether
+import           Serokell.Data.Memory.Units (Byte)
+
+import           Pos.Core                   (Coin, StakeholderId)
+import           Pos.Txp.Core.Types         (TxAux, TxId, TxIn, TxOutAux, TxUndo)
+import           Pos.Txp.Toil.Types         (ToilEnv, Utxo)
+import           Pos.Util                   (ether)
 
 ----------------------------------------------------------------------------
 -- MonadUtxo
@@ -40,10 +42,10 @@ instance {-# OVERLAPPABLE #-}
 instance MonadUtxoRead ((->) Utxo) where
     utxoGet txIn utxo = utxo ^. at txIn
 
-instance Monad m => MonadUtxoRead (Ether.StateT Utxo m) where
+instance Monad m => MonadUtxoRead (Ether.StateT' Utxo m) where
     utxoGet id = ether $ use (at id)
 
-instance Monad m => MonadUtxoRead (Ether.ReaderT Utxo m) where
+instance Monad m => MonadUtxoRead (Ether.ReaderT' Utxo m) where
     utxoGet id = ether $ view (at id)
 
 class MonadUtxoRead m => MonadUtxo m where
@@ -57,7 +59,7 @@ class MonadUtxoRead m => MonadUtxo m where
 instance {-# OVERLAPPABLE #-}
   (MonadUtxo m, MonadTrans t, Monad (t m)) => MonadUtxo (t m)
 
-instance Monad m => MonadUtxo (Ether.StateT Utxo m) where
+instance Monad m => MonadUtxo (Ether.StateT' Utxo m) where
     utxoPut id v = ether $ at id .= Just v
     utxoDel id = ether $ at id .= Nothing
 
@@ -122,8 +124,12 @@ instance MonadToilEnv ((->) ToilEnv) where
 ----------------------------------------------------------------------------
 
 class Monad m => MonadTxPool m where
+    -- | Check whether Tx with given identifier is stored in the pool.
     hasTx :: TxId -> m Bool
-    poolSize :: m Int
+    -- | Return size of the pool's binary representation (approximate).
+    poolSize :: m Byte
+    -- | Put a transaction with corresponding Undo into MemPool.
+    -- Transaction must not be in MemPool.
     putTxWithUndo :: TxId -> TxAux -> TxUndo -> m ()
 
     default hasTx
@@ -131,7 +137,7 @@ class Monad m => MonadTxPool m where
     hasTx = lift . hasTx
 
     default poolSize
-        :: (MonadTrans t, MonadTxPool m', t m' ~ m) => m Int
+        :: (MonadTrans t, MonadTxPool m', t m' ~ m) => m Byte
     poolSize = lift poolSize
 
     default putTxWithUndo

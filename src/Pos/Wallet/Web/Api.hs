@@ -1,236 +1,410 @@
-{-# LANGUAGE DataKinds      #-}
-{-# LANGUAGE KindSignatures #-}
-{-# LANGUAGE TypeOperators  #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE KindSignatures      #-}
+{-# LANGUAGE PolyKinds           #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeFamilies        #-}
+{-# LANGUAGE TypeOperators       #-}
 
 -- | Servant API for wallet.
 
 module Pos.Wallet.Web.Api
        ( WalletApi
        , walletApi
+
+       , ApiPrefix
+       , WalletVerb
+
        , TestReset
-       , GetWallet 
+
+       , GetWalletSet
+       , GetWalletSets
+       , NewWalletSet
+       , RestoreWalletSet
+       , RenameWalletSet
+       , DeleteWalletSet
+       , ImportWalletSet
+       , ChangeWalletSetPassphrase
+
+       , GetWallet
        , GetWallets
        , UpdateWallet
        , DeleteWallet
-       , ImportKey
-       , WalletRestore
        , NewWallet
+
+       , NewAccount
+
        , IsValidAddress
+
        , GetProfile
        , UpdateProfile
+
        , NewPayment
        , NewPaymentExt
        , UpdateTx
        , GetHistory
        , SearchHistory
+
        , NextUpdate
        , ApplyUpdate
+
        , RedeemADA
        , RedeemADAPaperVend
+
        , ReportingInitialized
        , ReportingElectroncrash
+
        , GetSlotsDuration
        , GetVersion
        , GetSyncProgress
        ) where
 
 
+import           Control.Monad.Catch        (try)
+import           Control.Monad.Except       (ExceptT (..))
 import           Servant.API                ((:<|>), (:>), Capture, Delete, Get, JSON,
-                                             Post, Put, QueryParam, ReqBody)
+                                             Post, Put, QueryParam, ReqBody, Verb)
 import           Servant.Multipart          (MultipartForm)
+import           Servant.Server             (Handler (..), HasServer (..))
 import           Universum
 
 import           Pos.Types                  (Coin, SoftwareVersion)
-import           Pos.Wallet.Web.ClientTypes (CAddress, CCurrency, CElectronCrashReport,
-                                             CInitialized, CPaperVendWalletRedeem,
-                                             CPassPhrase, CProfile, CTx, CTxId, CTxMeta,
-                                             CUpdateInfo, CWallet, CWalletInit,
-                                             CWalletMeta, CWalletRedeem, SyncProgress)
-import           Pos.Wallet.Web.Error       (WalletError)
+import           Pos.Wallet.Web.ClientTypes (Acc, CAccount, CAddress,
+                                             CElectronCrashReport, CInitialized,
+                                             CPaperVendWalletRedeem, CPassPhrase,
+                                             CProfile, CTx, CTxId, CTxMeta, CUpdateInfo,
+                                             CWallet, CWalletAddress, CWalletInit,
+                                             CWalletMeta, CWalletRedeem, CWalletSet,
+                                             CWalletSet, CWalletSetInit, SyncProgress, WS)
+import           Pos.Wallet.Web.Error       (WalletError, catchEndpointErrors)
 
 -- | Common prefix for all endpoints.
-type API = "api"
+type ApiPrefix = "api"
 
--- | All endpoints are defined as a separate types, for description in Swagger-based HTML-documentation.
+-- | Wrapper over 'Verb', which allows to catch exceptions thrown
+-- by endpoints.
+data WalletVerb verb
 
-type TestReset = API
-    :> "test"
+-- | Shortcut for common api result types.
+type WRes verbType a = WalletVerb $ verbType '[JSON] (Either WalletError a)
+
+-- TODO: shorten variables names?
+instance HasServer (Verb method status content $ Either WalletError a) context =>
+         HasServer (WalletVerb $ Verb method status content $ Either WalletError a) context where
+    type ServerT (WalletVerb $ Verb method status content $ Either WalletError a) m =
+        ServerT (Verb method status content a) m
+
+    route _ ctx del = route verbProxy ctx (handlerCatch <$> del)
+      where
+        verbProxy = Proxy @(Verb method status content $ Either WalletError a)
+        handlerCatch :: Handler a -> Handler (Either WalletError a)
+        handlerCatch =
+            Handler .
+            ExceptT .
+            try .
+            catchEndpointErrors .
+            (either throwM pure =<<) .
+            runExceptT .
+            runHandler'
+
+
+-- All endpoints are defined as a separate types, for description in Swagger-based HTML-documentation.
+
+type TestReset =
+       "test"
     :> "reset"
-    :> Post '[JSON] (Either WalletError ())
+    :> WRes Post ()
 
-type GetWallet = API
-    :> "wallets"
-    :> Capture "walletId" CAddress
-    :> Get '[JSON] (Either WalletError CWallet)
+-------------------------------------------------------------------------
+-- Wallet sets
+-------------------------------------------------------------------------
 
-type GetWallets = API
-    :> "wallets"
-    :> Get '[JSON] (Either WalletError [CWallet])
+type GetWalletSet =
+       "wallets"
+    :> "sets"
+    :> Capture "walletSetId" (CAddress WS)
+    :> WRes Get CWalletSet
 
-type UpdateWallet = API
-    :> "wallets"
-    :> Capture "walletId" CAddress
-    :> ReqBody '[JSON] CWalletMeta
-    :> Put '[JSON] (Either WalletError CWallet)
+type GetWalletSets =
+       "wallets"
+    :> "sets"
+    :> WRes Get [CWalletSet]
 
-type DeleteWallet = API
-    :> "wallets"
-    :> Capture "walletId" CAddress
-    :> Delete '[JSON] (Either WalletError ())
+type NewWalletSet =
+       "wallets"
+    :> "sets"
+    :> "new"
+    :> QueryParam "passphrase" CPassPhrase
+    :> ReqBody '[JSON] CWalletSetInit
+    :> WRes Post CWalletSet
 
-type ImportKey = API
-    :> "wallets"
-    :> "keys"
-    :> ReqBody '[JSON] Text
-    :> Post '[JSON] (Either WalletError CWallet)
-
-type WalletRestore = API
-    :> "wallets"
+type RestoreWalletSet =
+       "wallets"
+    :> "sets"
     :> "restore"
-    :> Capture "passphrase" CPassPhrase
-    :> ReqBody '[JSON] CWalletInit
-    :> Post '[JSON] (Either WalletError CWallet)
+    :> QueryParam "passphrase" CPassPhrase
+    :> ReqBody '[JSON] CWalletSetInit
+    :> WRes Post CWalletSet
 
-type NewWallet = API
-    :> "wallets"
-    :> Capture "passphrase" CPassPhrase
-    :> ReqBody '[JSON] CWalletInit
-    :> Post '[JSON] (Either WalletError CWallet)
+type RenameWalletSet =
+       "wallets"
+    :> "sets"
+    :> "rename"
+    :> Capture "walletSetId" (CAddress WS)
+    :> Capture "name" Text
+    :> WRes Post CWalletSet
 
-type IsValidAddress = API
-    :> "addresses"
+type DeleteWalletSet =
+       "wallets"
+    :> "sets"
+    :> Capture "walletSetId" (CAddress WS)
+    :> WRes Delete ()
+
+type ImportWalletSet =
+       "wallets"
+    :> "sets"
+    :> "keys"
+    :> QueryParam "passphrase" CPassPhrase
+    :> ReqBody '[JSON] Text
+    :> WRes Post CWalletSet
+
+type ChangeWalletSetPassphrase =
+       "wallets"
+    :> "sets"
+    :> "password"
+    :> Capture "walletSetId" (CAddress WS)
+    :> QueryParam "old" CPassPhrase
+    :> QueryParam "new" CPassPhrase
+    :> WRes Post ()
+
+-------------------------------------------------------------------------
+-- Wallets
+-------------------------------------------------------------------------
+
+type GetWallet =
+       "wallets"
+    :> Capture "walletId" CWalletAddress
+    :> WRes Get CWallet
+
+type GetWallets =
+       "wallets"
+    :> QueryParam "walletSetId" (CAddress WS)
+    :> WRes Get [CWallet]
+
+type UpdateWallet =
+       "wallets"
+    :> Capture "walletId" CWalletAddress
+    :> ReqBody '[JSON] CWalletMeta
+    :> WRes Put CWallet
+
+type NewWallet =
+       "wallets"
+    :> QueryParam "passphrase" CPassPhrase
+    :> ReqBody '[JSON] CWalletInit
+    :> WRes Post CWallet
+
+type DeleteWallet =
+       "wallets"
+    :> Capture "walletId" CWalletAddress
+    :> WRes Delete ()
+
+-------------------------------------------------------------------------
+-- Accounts
+-------------------------------------------------------------------------
+
+type NewAccount =
+       "account"
+    :> QueryParam "passphrase" CPassPhrase
+    :> ReqBody '[JSON] CWalletAddress
+    :> WRes Post CAccount
+
+-------------------------------------------------------------------------
+-- Addresses
+-------------------------------------------------------------------------
+
+type IsValidAddress =
+       "addresses"
     :> Capture "address" Text
-    :> "currencies"
-    :> Capture "currency" CCurrency
-    :> Get '[JSON] (Either WalletError Bool)
+    :> WRes Get Bool
 
-type GetProfile = API
-    :> "profile"
-    :> Get '[JSON] (Either WalletError CProfile)
+-------------------------------------------------------------------------
+-- Profile(s)
+-------------------------------------------------------------------------
 
-type UpdateProfile = API
-    :> "profile"
+type GetProfile =
+       "profile"
+    :> WRes Get CProfile
+
+type UpdateProfile =
+       "profile"
     :> ReqBody '[JSON] CProfile
-    :> Post '[JSON] (Either WalletError CProfile)
+    :> WRes Post CProfile
 
-type NewPayment = API
-    :> "txs"
-    :> "payments"
-    :> Capture "passphrase" CPassPhrase
-    :> Capture "from" CAddress
-    :> Capture "to" CAddress
-    :> Capture "amount" Coin
-    :> Post '[JSON] (Either WalletError CTx)
 
-type NewPaymentExt = API
-    :> "txs"
+-------------------------------------------------------------------------
+-- Transactions
+-------------------------------------------------------------------------
+
+type NewPayment =
+       "txs"
     :> "payments"
-    :> Capture "passphrase" CPassPhrase
-    :> Capture "from" CAddress
-    :> Capture "to" CAddress
+    :> QueryParam "passphrase" CPassPhrase
+    :> Capture "from" CWalletAddress
+    :> Capture "to" (CAddress Acc)
     :> Capture "amount" Coin
-    :> Capture "currency" CCurrency
+    :> WRes Post CTx
+
+type NewPaymentExt =
+       "txs"
+    :> "payments"
+    :> QueryParam "passphrase" CPassPhrase
+    :> Capture "from" CWalletAddress
+    :> Capture "to" (CAddress Acc)
+    :> Capture "amount" Coin
     :> Capture "title" Text
     :> Capture "description" Text
-    :> Post '[JSON] (Either WalletError CTx)
+    :> WRes Post CTx
 
-type UpdateTx = API
-    :> "txs"
+
+type UpdateTx =
+       "txs"
     :> "payments"
-    :> Capture "address" CAddress
+    :> Capture "address" CWalletAddress
     :> Capture "transaction" CTxId
     :> ReqBody '[JSON] CTxMeta
-    :> Post '[JSON] (Either WalletError ())
+    :> WRes Post ()
 
-type GetHistory = API
-    :> "txs"
+type GetHistory =
+       "txs"
     :> "histories"
-    :> Capture "address" CAddress
+    :> Capture "walletId" CWalletAddress
     :> QueryParam "skip" Word
     :> QueryParam "limit" Word
-    :> Get '[JSON] (Either WalletError ([CTx], Word))
+    :> WRes Get ([CTx], Word)
 
-type SearchHistory = API
-    :> "txs"
+type SearchHistory =
+       "txs"
     :> "histories"
-    :> Capture "address" CAddress
+    :> Capture "walletId" CWalletAddress
     :> Capture "search" Text
+    :> QueryParam "account" (CAddress Acc)
     :> QueryParam "skip" Word
     :> QueryParam "limit" Word
-    :> Get '[JSON] (Either WalletError ([CTx], Word))
+    :> WRes Get ([CTx], Word)
 
-type NextUpdate = API
-    :> "update"
-    :> Get '[JSON] (Either WalletError CUpdateInfo)
 
-type ApplyUpdate = API
-    :> "update"
-    :> Post '[JSON] (Either WalletError ())
+-------------------------------------------------------------------------
+-- Updates
+-------------------------------------------------------------------------
 
-type RedeemADA = API
-    :> "redemptions"
+type NextUpdate =
+       "update"
+    :> WRes Get CUpdateInfo
+
+type ApplyUpdate =
+       "update"
+    :> WRes Post ()
+
+
+-------------------------------------------------------------------------
+-- Redemptions
+-------------------------------------------------------------------------
+
+type RedeemADA =
+       "redemptions"
     :> "ada"
+    :> QueryParam "passphrase" CPassPhrase
     :> ReqBody '[JSON] CWalletRedeem
-    :> Post '[JSON] (Either WalletError CTx)
+    :> WRes Post CTx
 
-type RedeemADAPaperVend = API
-    :> "papervend"
+type RedeemADAPaperVend =
+       "papervend"
     :> "redemptions"
     :> "ada"
+    :> QueryParam "passphrase" CPassPhrase
     :> ReqBody '[JSON] CPaperVendWalletRedeem
-    :> Post '[JSON] (Either WalletError CTx)
+    :> WRes Post CTx
 
-type ReportingInitialized = API
-    :> "reporting"
+
+-------------------------------------------------------------------------
+-- Reporting
+-------------------------------------------------------------------------
+
+type ReportingInitialized =
+       "reporting"
     :> "initialized"
     :> ReqBody '[JSON] CInitialized
-    :> Post '[JSON] (Either WalletError ())
+    :> WRes Post ()
 
-type ReportingElectroncrash = API
-    :> "reporting"
+type ReportingElectroncrash =
+       "reporting"
     :> "electroncrash"
     :> MultipartForm CElectronCrashReport
-    :> Post '[JSON] (Either WalletError ())
+    :> WRes Post ()
 
-type GetSlotsDuration = API
-    :> "settings"
+
+-------------------------------------------------------------------------
+-- Settings
+-------------------------------------------------------------------------
+
+type GetSlotsDuration =
+       "settings"
     :> "slots"
     :> "duration"
-    :> Get '[JSON] (Either WalletError Word)
+    :> WRes Get Word
 
-type GetVersion = API
-    :> "settings"
+type GetVersion =
+       "settings"
     :> "version"
-    :> Get '[JSON] (Either WalletError SoftwareVersion)
+    :> WRes Get SoftwareVersion
 
-type GetSyncProgress = API
-    :> "settings"
+type GetSyncProgress =
+       "settings"
     :> "sync"
     :> "progress"
-    :> Get '[JSON] (Either WalletError SyncProgress)
+    :> WRes Get SyncProgress
 
 -- | Servant API which provides access to wallet.
 -- TODO: Should be composed depending on the resource - wallets, txs, ... http://haskell-servant.github.io/tutorial/0.4/server.html#nested-apis
-type WalletApi =
+type WalletApi = ApiPrefix :> (
      -- only works in development mode, gives 403 otherwise
      TestReset
     :<|>
      -------------------------------------------------------------------------
+     -- Wallet sets
+     -------------------------------------------------------------------------
+     GetWalletSet
+    :<|>
+     GetWalletSets
+    :<|>
+     NewWalletSet
+    :<|>
+     RestoreWalletSet
+    :<|>
+     RenameWalletSet
+    :<|>
+     DeleteWalletSet
+    :<|>
+     ImportWalletSet
+    :<|>
+     ChangeWalletSetPassphrase
+    :<|>
+     -------------------------------------------------------------------------
      -- Wallets
      -------------------------------------------------------------------------
-     GetWallet 
+     GetWallet
     :<|>
      GetWallets
     :<|>
      UpdateWallet
     :<|>
+     NewWallet
+    :<|>
      DeleteWallet
     :<|>
-     ImportKey
-    :<|>
-     WalletRestore 
-    :<|>
-     NewWallet
+     -------------------------------------------------------------------------
+     -- Accounts
+     -------------------------------------------------------------------------
+     NewAccount
     :<|>
      -------------------------------------------------------------------------
      -- Addresses
@@ -267,7 +441,7 @@ type WalletApi =
      -------------------------------------------------------------------------
      -- Updates
      -------------------------------------------------------------------------
-     NextUpdate 
+     NextUpdate
     :<|>
      ApplyUpdate
     :<|>
@@ -281,18 +455,19 @@ type WalletApi =
      -------------------------------------------------------------------------
      -- Reporting
      -------------------------------------------------------------------------
-     ReportingInitialized 
+     ReportingInitialized
     :<|>
-     ReportingElectroncrash 
+     ReportingElectroncrash
     :<|>
      -------------------------------------------------------------------------
      -- Settings
      -------------------------------------------------------------------------
      GetSlotsDuration
     :<|>
-     GetVersion 
+     GetVersion
     :<|>
-     GetSyncProgress 
+     GetSyncProgress
+    )
 
 -- | Helper Proxy.
 walletApi :: Proxy WalletApi

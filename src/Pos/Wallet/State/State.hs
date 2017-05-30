@@ -16,30 +16,26 @@ module Pos.Wallet.State.State
        , getUtxo
        , getOldestUtxo
        , getTxHistory
-
-       , getSlotDuration
-       , getMaxBlockSize
        ) where
 
-import qualified Control.Monad.Ether.Implicit as Ether
-import           Data.Acid                    (EventResult, EventState, QueryEvent)
-import           Data.Time.Units              (Millisecond)
-import           Serokell.Data.Memory.Units   (Byte)
 import           Universum
 
-import           Pos.Txp                      (Tx, Utxo)
-import           Pos.Types                    (HeaderHash)
+import           Data.Acid                (EventResult, EventState, QueryEvent)
+import qualified Ether
 
-import           Pos.Wallet.State.Acidic      (WalletState, closeState, openMemState,
-                                               openState)
-import           Pos.Wallet.State.Acidic      as A
-import           Pos.Wallet.State.Storage     (Block', Storage)
+import           Pos.Txp                  (Tx, Utxo)
+import           Pos.Types                (HeaderHash)
+
+import           Pos.Wallet.State.Acidic  (WalletState, closeState, openMemState,
+                                           openState)
+import           Pos.Wallet.State.Acidic  as A
+import           Pos.Wallet.State.Storage (Block', Storage)
 
 -- | MonadWalletDB stands for monad which is able to get web wallet state
-type MonadWalletDB = Ether.MonadReader WalletState
+type MonadWalletDB = Ether.MonadReader' WalletState
 
 getWalletState :: MonadWalletDB m => m WalletState
-getWalletState = Ether.ask
+getWalletState = Ether.ask'
 
 -- | Constraint for working with web wallet DB
 type WalletModeDB m = (MonadWalletDB m, MonadIO m)
@@ -68,9 +64,3 @@ getOldestUtxo = queryDisk A.GetOldestUtxo
 
 getTxHistory :: WalletModeDB m => m [Tx]
 getTxHistory = queryDisk A.GetTxHistory
-
-getSlotDuration :: WalletModeDB m => m Millisecond
-getSlotDuration = queryDisk A.GetSlotDuration
-
-getMaxBlockSize :: WalletModeDB m => m Byte
-getMaxBlockSize = queryDisk A.GetMaxBlockSize

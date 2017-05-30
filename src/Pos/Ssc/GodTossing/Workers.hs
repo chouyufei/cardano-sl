@@ -15,6 +15,7 @@ import qualified Data.HashMap.Strict              as HM
 import qualified Data.List.NonEmpty               as NE
 import           Data.Tagged                      (Tagged (..))
 import           Data.Time.Units                  (Microsecond, Millisecond, convertUnit)
+import qualified Ether
 import           Formatting                       (build, ords, sformat, shown, (%))
 import           Mockable                         (currentTime, delay)
 import           Serokell.Util.Exceptions         ()
@@ -29,15 +30,15 @@ import           Pos.Binary.Relay                 ()
 import           Pos.Binary.Ssc                   ()
 import           Pos.Communication.Message        (MessagePart)
 import           Pos.Communication.Protocol       (OutSpecs, SendActions, Worker',
-                                                   WorkerSpec, convH, onNewSlotWorker,
-                                                   toOutSpecs)
-import           Pos.Communication.Relay          (DataMsg, InvOrData, ReqMsg,
-                                                   invReqDataFlowNeighbors)
+                                                   WorkerSpec, onNewSlotWorker)
+import           Pos.Communication.Relay          (DataMsg, invReqDataFlowNeighborsTK)
+import           Pos.Communication.Specs          (createOutSpecs)
+import           Pos.Communication.Types          (InvOrDataTK)
 import           Pos.Constants                    (mpcSendInterval, slotSecurityParam,
                                                    vssMaxTTL)
-import           Pos.Context                      (getNodeContext, lrcActionOnEpochReason,
-                                                   ncNodeParams, ncPublicKey,
-                                                   ncSscContext, npSecretKey)
+import           Pos.Context                      (SscContextTag, lrcActionOnEpochReason,
+                                                   npPublicKey, npSecretKey)
+import           Pos.Core                         (mkLocalSlotIndex)
 import           Pos.Crypto                       (SecretKey, VssKeyPair, VssPublicKey,
                                                    randomNumber, runSecureRandom)
 import           Pos.Crypto.SecretSharing         (toVssPublicKey)
@@ -69,13 +70,15 @@ import           Pos.Ssc.GodTossing.Toss          (computeParticipants,
 import           Pos.Ssc.GodTossing.Type          (SscGodTossing)
 import           Pos.Ssc.GodTossing.Types         (gsCommitments, gtcParticipateSsc,
                                                    gtcVssKeyPair)
-import           Pos.Ssc.GodTossing.Types.Message (GtMsgContents (..), GtTag (..))
-import           Pos.Types                        (EpochIndex, LocalSlotIndex,
-                                                   SlotId (..), StakeholderId,
+import           Pos.Ssc.GodTossing.Types.Message (GtTag (..), MCCommitment (..),
+                                                   MCOpening (..), MCShares (..),
+                                                   MCVssCertificate (..))
+import           Pos.Types                        (EpochIndex, SlotId (..), StakeholderId,
                                                    StakeholderId, Timestamp (..),
                                                    addressHash)
 import           Pos.Util                         (getKeys, inAssertMode)
-import           Pos.WorkMode                     (WorkMode)
+import           Pos.Util.Util                    (leftToPanic)
+import           Pos.WorkMode.Class               (WorkMode)
 
 instance SscWorkersClass SscGodTossing where
     sscWorkers = Tagged $ first pure onNewSlotSsc
@@ -91,9 +94,9 @@ onNewSlotSsc = onNewSlotWorker True outs $ \slotId sendActions -> do
         "couldn't get SSC richmen"
         getRichmenSsc
     localOnNewSlot slotId
-    participationEnabled <- getNodeContext >>=
-        atomically . readTVar . gtcParticipateSsc . ncSscContext
-    ourId <- addressHash . ncPublicKey <$> getNodeContext
+    participationEnabled <- Ether.ask @SscContextTag >>=
+        atomically . readTVar . gtcParticipateSsc
+    ourId <- Ether.asks' (addressHash . npPublicKey)
     let enoughStake = ourId `HM.member` richmen
     when (participationEnabled && not enoughStake) $
         logDebug "Not enough stake to participate in MPC"
@@ -103,9 +106,12 @@ onNewSlotSsc = onNewSlotWorker True outs $ \slotId sendActions -> do
         onNewSlotOpening slotId sendActions
         onNewSlotShares slotId sendActions
   where
-    outs = toOutSpecs [ convH (Proxy :: Proxy (InvOrData GtTag StakeholderId GtMsgContents))
-                              (Proxy :: Proxy (ReqMsg StakeholderId GtTag))
-                      ]
+    outs = mconcat
+              [ createOutSpecs (Proxy :: Proxy (InvOrDataTK StakeholderId MCCommitment))
+              , createOutSpecs (Proxy :: Proxy (InvOrDataTK StakeholderId MCOpening))
+              , createOutSpecs (Proxy :: Proxy (InvOrDataTK StakeholderId MCShares))
+              , createOutSpecs (Proxy :: Proxy (InvOrDataTK StakeholderId MCVssCertificate))
+              ]
 
 -- CHECK: @checkNSendOurCert
 -- Checks whether 'our' VSS certificate has been announced
@@ -124,8 +130,8 @@ checkNSendOurCert sendActions = do
                          \we will announce it now."
             ourVssCertificate <- getOurVssCertificate slot
             let contents = MCVssCertificate ourVssCertificate
-            sscProcessOurMessage contents
-            invReqDataFlowNeighbors "ssc" sendActions VssCertificateMsg ourId contents
+            sscProcessOurMessage (sscProcessCertificate ourVssCertificate)
+            invReqDataFlowNeighborsTK "ssc" sendActions ourId contents
             logDebug "Announced our VssCertificate."
 
     slMaybe <- getCurrentSlot
@@ -153,7 +159,7 @@ checkNSendOurCert sendActions = do
         case HM.lookup ourId certs of
             Just c -> return c
             Nothing -> do
-                ourSk <- npSecretKey . ncNodeParams <$> getNodeContext
+                ourSk <- Ether.asks' npSecretKey
                 ourVssKeyPair <- getOurVssKeyPair
                 let vssKey = asBinary $ toVssPublicKey ourVssKeyPair
                     createOurCert =
@@ -165,11 +171,11 @@ getOurPkAndId
     :: WorkMode SscGodTossing m
     => m (PublicKey, StakeholderId)
 getOurPkAndId = do
-    ourPk <- ncPublicKey <$> getNodeContext
+    ourPk <- Ether.asks' npPublicKey
     return (ourPk, addressHash ourPk)
 
 getOurVssKeyPair :: WorkMode SscGodTossing m => m VssKeyPair
-getOurVssKeyPair = gtcVssKeyPair . ncSscContext <$> getNodeContext
+getOurVssKeyPair = Ether.asks @SscContextTag gtcVssKeyPair
 
 -- Commitments-related part of new slot processing
 onNewSlotCommitment
@@ -178,7 +184,7 @@ onNewSlotCommitment
 onNewSlotCommitment slotId@SlotId {..} sendActions
     | not (isCommitmentIdx siSlot) = pass
     | otherwise = do
-        ourId <- addressHash . ncPublicKey <$> getNodeContext
+        ourId <- Ether.asks' (addressHash . npPublicKey)
         shouldSendCommitment <- andM
             [ not . hasCommitment ourId <$> gtGetGlobalState
             , HM.member ourId <$> getStableCerts siEpoch]
@@ -191,7 +197,7 @@ onNewSlotCommitment slotId@SlotId {..} sendActions
                 Nothing   -> onNewSlotCommDo ourId
   where
     onNewSlotCommDo ourId = do
-        ourSk <- npSecretKey . ncNodeParams <$> getNodeContext
+        ourSk <- Ether.asks' npSecretKey
         logDebug $ sformat ("Generating secret for "%ords%" epoch") siEpoch
         generated <- generateAndSetNewSecret ourSk slotId
         case generated of
@@ -202,7 +208,7 @@ onNewSlotCommitment slotId@SlotId {..} sendActions
 
     sendOurCommitment comm ourId = do
         let msg = MCCommitment comm
-        sscProcessOurMessage msg
+        sscProcessOurMessage (sscProcessCommitment comm)
         sendOurData sendActions CommitmentMsg ourId msg siEpoch 0
 
 -- Openings-related part of new slot processing
@@ -212,7 +218,7 @@ onNewSlotOpening
 onNewSlotOpening SlotId {..} sendActions
     | not $ isOpeningIdx siSlot = pass
     | otherwise = do
-        ourId <- addressHash . ncPublicKey <$> getNodeContext
+        ourId <- Ether.asks' (addressHash . npPublicKey)
         globalData <- gtGetGlobalState
         unless (hasOpening ourId globalData) $
             case globalData ^. gsCommitments . to getCommitmentsMap . at ourId of
@@ -226,7 +232,7 @@ onNewSlotOpening SlotId {..} sendActions
         case mbOpen of
             Just open -> do
                 let msg = MCOpening ourId open
-                sscProcessOurMessage msg
+                sscProcessOurMessage (sscProcessOpening ourId open)
                 sendOurData sendActions OpeningMsg ourId msg siEpoch 2
             Nothing -> logWarning "We don't know our opening, maybe we started recently"
 
@@ -235,29 +241,26 @@ onNewSlotShares
     :: (WorkMode SscGodTossing m)
     => SlotId -> Worker' m
 onNewSlotShares SlotId {..} sendActions = do
-    ourId <- addressHash . ncPublicKey <$> getNodeContext
+    ourId <- Ether.asks' (addressHash . npPublicKey)
     -- Send decrypted shares that others have sent us
     shouldSendShares <- do
         sharesInBlockchain <- hasShares ourId <$> gtGetGlobalState
         return $ isSharesIdx siSlot && not sharesInBlockchain
     when shouldSendShares $ do
-        ourVss <- gtcVssKeyPair . ncSscContext <$> getNodeContext
+        ourVss <- Ether.asks @SscContextTag gtcVssKeyPair
         shares <- getOurShares ourVss
         let lShares = fmap (NE.map asBinary) shares
         unless (HM.null shares) $ do
             let msg = MCShares ourId lShares
-            sscProcessOurMessage msg
+            sscProcessOurMessage (sscProcessShares ourId lShares)
             sendOurData sendActions SharesMsg ourId msg siEpoch 4
 
 sscProcessOurMessage
-    :: WorkMode SscGodTossing m
-    => GtMsgContents -> m ()
-sscProcessOurMessage msg = runExceptT (sscProcessOurMessageDo msg) >>= logResult
+    :: (Buildable err, WorkMode SscGodTossing m)
+    => ExceptT err m () -> m ()
+sscProcessOurMessage action =
+    runExceptT action >>= logResult
   where
-    sscProcessOurMessageDo (MCCommitment comm)     = sscProcessCommitment comm
-    sscProcessOurMessageDo (MCOpening id open)     = sscProcessOpening id open
-    sscProcessOurMessageDo (MCShares id shares)    = sscProcessShares id shares
-    sscProcessOurMessageDo (MCVssCertificate cert) = sscProcessCertificate cert
     logResult (Right _) = logDebug "We have accepted our message"
     logResult (Left er) =
         logWarning $
@@ -266,13 +269,15 @@ sscProcessOurMessage msg = runExceptT (sscProcessOurMessageDo msg) >>= logResult
 sendOurData ::
     ( WorkMode SscGodTossing m
     , MessagePart contents
-    , Bi (DataMsg contents))
+    , Bi (DataMsg contents)
+    , Typeable contents
+    )
     => SendActions m
     -> GtTag
     -> StakeholderId
     -> contents
     -> EpochIndex
-    -> LocalSlotIndex
+    -> Word16
     -> m ()
 sendOurData sendActions msgTag ourId dt epoch slMultiplier = do
     -- Note: it's not necessary to create a new thread here, because
@@ -280,7 +285,7 @@ sendOurData sendActions msgTag ourId dt epoch slMultiplier = do
     -- type of message.
     waitUntilSend msgTag epoch slMultiplier
     logInfo $ sformat ("Announcing our "%build) msgTag
-    invReqDataFlowNeighbors "ssc" sendActions msgTag ourId dt
+    invReqDataFlowNeighborsTK "ssc" sendActions ourId dt
     logDebug $ sformat ("Sent our " %build%" to neighbors") msgTag
 
 -- Generate new commitment and opening and use them for the current
@@ -349,11 +354,14 @@ randomTimeInInterval interval =
 
 waitUntilSend
     :: WorkMode SscGodTossing m
-    => GtTag -> EpochIndex -> LocalSlotIndex -> m ()
+    => GtTag -> EpochIndex -> Word16 -> m ()
 waitUntilSend msgTag epoch slMultiplier = do
+    let slot =
+            leftToPanic "waitUntilSend: " $
+            mkLocalSlotIndex $ slMultiplier * slotSecurityParam
     Timestamp beginning <-
         getSlotStartEmpatically $
-        SlotId {siEpoch = epoch, siSlot = slMultiplier * slotSecurityParam}
+        SlotId {siEpoch = epoch, siSlot = slot}
     curTime <- currentTime
     let minToSend = curTime
     let maxToSend = beginning + mpcSendInterval

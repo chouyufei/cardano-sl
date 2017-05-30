@@ -29,6 +29,9 @@ module Pos.Txp.DB.Utxo
        , sanityCheckUtxo
        ) where
 
+import           Universum
+
+import qualified Data.HashSet         as HS
 import qualified Data.Map             as M
 import qualified Data.Text.Buildable
 import qualified Database.RocksDB     as Rocks
@@ -36,11 +39,11 @@ import           Formatting           (bprint, build, sformat, (%))
 import           Serokell.Util        (Color (Red), colorize)
 import           Serokell.Util.Text   (listJson, pairF)
 import           System.Wlog          (WithLogger, logError)
-import           Universum
 
 import           Pos.Binary.Class     (encodeStrict)
 import           Pos.Binary.Core      ()
-import           Pos.DB.Class         (MonadDB, getUtxoDB)
+import           Pos.Core.Address     (AddressIgnoringAttributes (..))
+import           Pos.DB.Class         (MonadDB, MonadDBPure, getGStateDB)
 import           Pos.DB.Error         (DBError (..))
 import           Pos.DB.Functions     (RocksBatchOp (..), encodeWithKeyPrefix, rocksGetBi,
                                        rocksGetBytes)
@@ -48,7 +51,7 @@ import           Pos.DB.GState.Common (gsGetBi, gsPutBi, writeBatchGState)
 import           Pos.DB.Iterator      (DBIteratorClass (..), DBnIterator, DBnMapIterator,
                                        IterType, runDBnIterator, runDBnMapIterator)
 import           Pos.DB.Types         (DB, NodeDBs (_gStateDB))
-import           Pos.Txp.Core         (TxIn (..), TxOutAux, addrBelongsTo, txOutStake)
+import           Pos.Txp.Core         (TxIn (..), TxOutAux, addrBelongsToSet, txOutStake)
 import           Pos.Txp.Toil.Types   (Utxo)
 import           Pos.Types            (Address, Coin, coinF, mkCoin, sumCoins,
                                        unsafeAddCoin, unsafeIntegerToCoin)
@@ -58,7 +61,7 @@ import           Pos.Util.Iterator    (nextItem)
 -- Getters
 ----------------------------------------------------------------------------
 
-getTxOut :: MonadDB m => TxIn -> m (Maybe TxOutAux)
+getTxOut :: MonadDBPure m => TxIn -> m (Maybe TxOutAux)
 getTxOut = gsGetBi . txInKey
 
 getTxOutFromDB :: (MonadIO m, MonadThrow m) => TxIn -> DB -> m (Maybe TxOutAux)
@@ -90,12 +93,12 @@ instance RocksBatchOp UtxoOp where
 
 prepareGStateUtxo :: MonadDB m => Utxo -> m ()
 prepareGStateUtxo genesisUtxo =
-    unlessM isUtxoInitialized $ do
-        -- put genesis utxo
+    unlessM isUtxoInitialized putGenesisUtxo
+  where
+    putGenesisUtxo = do
         let utxoList = M.toList genesisUtxo
         writeBatchGState $ concatMap createBatchOp utxoList
         gsPutBi initializationFlagKey True
-  where
     createBatchOp (txin, txout) =
         [AddTxOut txin txout]
 
@@ -156,10 +159,11 @@ getFilteredUtxo'
        , IterKey i ~ TxIn
        , IterValue i ~ TxOutAux
        )
-    => Address -> m Utxo
-getFilteredUtxo' addr = filterUtxo @i $ \(_, out) -> out `addrBelongsTo` addr
+    => [Address] -> m Utxo
+getFilteredUtxo' addrs = filterUtxo @i $ \(_, out) -> out `addrBelongsToSet` addrsSet
+  where addrsSet = HS.fromList $ map AddressIA addrs
 
-getFilteredUtxo :: MonadDB m => Address -> m Utxo
+getFilteredUtxo :: MonadDB m => [Address] -> m Utxo
 getFilteredUtxo = getFilteredUtxo' @UtxoIter
 
 -- | Get full utxo. Use with care – the utxo can be very big (hundreds of
@@ -209,11 +213,11 @@ iterationUtxoPrefix :: ByteString
 iterationUtxoPrefix = "ut/t/"
 
 initializationFlagKey :: ByteString
-initializationFlagKey = "ut/gutxo"
+initializationFlagKey = "ut/gutxo/"
 
 ----------------------------------------------------------------------------
 -- Details
 ----------------------------------------------------------------------------
 
 isUtxoInitialized :: MonadDB m => m Bool
-isUtxoInitialized = isJust <$> (getUtxoDB >>= rocksGetBytes initializationFlagKey)
+isUtxoInitialized = isJust <$> (getGStateDB >>= rocksGetBytes initializationFlagKey)

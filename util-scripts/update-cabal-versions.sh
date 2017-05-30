@@ -16,6 +16,8 @@ updateVersion core/cardano-sl-core.cabal
 updateVersion infra/cardano-sl-infra.cabal
 updateVersion db/cardano-sl-db.cabal
 updateVersion lrc/cardano-sl-lrc.cabal
+updateVersion ssc/cardano-sl-ssc.cabal
 updateVersion update/cardano-sl-update.cabal
+updateVersion godtossing/cardano-sl-godtossing.cabal
 
 echo "Updated to version $newVersion"

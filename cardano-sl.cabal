@@ -12,10 +12,6 @@ build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 
-flag asserts
-  default:     True
-  manual:      True
-
 Flag with-web
   default:     True
   manual:      True
@@ -34,10 +30,23 @@ Flag with-explorer
 
   description: Build with explorer
 
+-- Note: for components that we don't want to build, we add both "buildable:
+-- False" *and* wrap build-depends into "if !flag(for-installer)". This is
+-- because stack doesn't seem to take "buildable: False" into account when
+-- calculating the build plan.
+Flag for-installer
+  default:     False
+  manual:      True
+
+  description: Build a reduced set of components (only what is needed for the
+               installer, plus tests)
+
 library
   exposed-modules:      Pos.Aeson
                         Pos.Binary
                         Pos.Block.Arbitrary
+                        Pos.Block.BListener
+                        Pos.Block.Core
                         Pos.Block.Logic
                         Pos.Block.Network
                         Pos.Block.Pure
@@ -83,7 +92,6 @@ library
                         Pos.Ssc.GodTossing
                         Pos.Ssc.NistBeacon
                         Pos.Ssc.SscAlgo
-                        Pos.Ssc.Extra
 
                         Pos.Statistics
 
@@ -99,10 +107,8 @@ library
 
                         Pos.Types
                         Pos.Types.Arbitrary
+                        Pos.Types.Arbitrary.Core
                         Pos.Types.Arbitrary.Unsafe
-                        Pos.Types.Block
-                        Pos.Types.Block.Types
-                        Pos.Types.Block.Instances
 
                         -- Update system
                         Pos.Update
@@ -110,13 +116,19 @@ library
 
                         -- Utilities/helpers
                         Pos.Util
+                        Pos.Util.Undefined
+                        Pos.Util.Arbitrary
                         Pos.Util.BackupPhrase
                         Pos.Util.JsonLog
                         Pos.Util.UserSecret
 
+                        -- Wallets
+                        Pos.Wallet.Web.Secret
+
                         -- Worker, work mode
                         Pos.Worker
                         Pos.WorkMode
+                        Pos.WorkMode.Class
   -- Explorer (TODO: move into cardano-explorer)
   exposed-modules:
                         Pos.Explorer
@@ -132,20 +144,40 @@ library
 
                         -- Binary serialization
                         Pos.Binary.Block
-                        Pos.Binary.Block.Types
                         Pos.Binary.Block.Block
+                        Pos.Binary.Block.Core
                         Pos.Binary.Communication
+                        Pos.Binary.Delegation
                         Pos.Binary.Genesis
                         Pos.Binary.Merkle
                         Pos.Binary.Relay
                         Pos.Binary.Ssc
-                        Pos.Binary.Ssc.GodTossing.Core
-                        Pos.Binary.Ssc.GodTossing.Types
                         Pos.Binary.Txp
+                        Pos.Binary.Txp.Core
+                        Pos.Binary.Txp.Network
 
                         -- Block processing
+                        Pos.Block.Core.Genesis
+                        Pos.Block.Core.Genesis.Chain
+                        Pos.Block.Core.Genesis.Lens
+                        Pos.Block.Core.Genesis.Misc
+                        Pos.Block.Core.Genesis.Types
+                        Pos.Block.Core.Main
+                        Pos.Block.Core.Main.Chain
+                        Pos.Block.Core.Main.Helpers
+                        Pos.Block.Core.Main.Lens
+                        Pos.Block.Core.Main.Misc
+                        Pos.Block.Core.Main.Types
+                        Pos.Block.Core.Union
+                        Pos.Block.Core.Union.Misc
+                        Pos.Block.Core.Union.Types
                         Pos.Block.Error
+                        Pos.Block.Logic.Creation
+                        Pos.Block.Logic.Header
                         Pos.Block.Logic.Internal
+                        Pos.Block.Logic.Slog
+                        Pos.Block.Logic.Util
+                        Pos.Block.Logic.VAR
                         Pos.Block.Network.Announce
                         Pos.Block.Network.Types
                         Pos.Block.Network.Listeners
@@ -159,23 +191,21 @@ library
                         Pos.CompileConfig.Type
 
                         -- NodeContext
-                        Pos.Context.Class
                         Pos.Context.Context
                         Pos.Context.Functions
-                        Pos.Context.Holder
 
                         -- Crypto
                         Pos.Crypto.Arbitrary.Unsafe
                         Pos.Crypto.HDDiscovery
 
                         -- Heavy delegation
+                        Pos.Delegation.Arbitrary
                         Pos.Delegation.Class
                         Pos.Delegation.DB
-                        Pos.Delegation.Holder
+                        Pos.Delegation.Helpers
                         Pos.Delegation.Listeners
                         Pos.Delegation.Logic
                         Pos.Delegation.Lrc
-                        Pos.Delegation.Methods
                         Pos.Delegation.Types
                         Pos.Delegation.Worker
 
@@ -194,6 +224,7 @@ library
                         Pos.Communication.Server
                         Pos.Communication.Specs
                         Pos.Communication.Limits
+                        Pos.Communication.Update
 
                         -- DB
                         Pos.DB.GState.BlockExtra
@@ -212,54 +243,20 @@ library
                         Pos.Lrc.DB.Lrc
                         Pos.Lrc.DB.Richmen
                         Pos.Lrc.Logic
+                        Pos.Lrc.Mode
                         Pos.Lrc.Worker
 
                         -- SafeCopy serialization (required in wallet)
                         Pos.SafeCopy
 
                         -- SSC
-                        Pos.Ssc.Class.Types
-                        Pos.Ssc.Class.Helpers
-                        Pos.Ssc.Class.Storage
                         Pos.Ssc.Class.Workers
                         Pos.Ssc.Class.Listeners
-                        Pos.Ssc.Class.LocalData
 
-                        Pos.Ssc.Extra.Class
-                        Pos.Ssc.Extra.Holder
-                        Pos.Ssc.Extra.Logic
-                        Pos.Ssc.Extra.Types
+                        Pos.Ssc.Util
 
                         Pos.Ssc.GodTossing.Arbitrary
-                        Pos.Ssc.GodTossing.Core
-                        Pos.Ssc.GodTossing.Core.Core
-                        Pos.Ssc.GodTossing.Core.Types
-                        Pos.Ssc.GodTossing.DB
-                        Pos.Ssc.GodTossing.Error
-                        Pos.Ssc.GodTossing.Functions
-                        Pos.Ssc.GodTossing.Genesis
-                        Pos.Ssc.GodTossing.GState
                         Pos.Ssc.GodTossing.Listeners
-                        Pos.Ssc.GodTossing.LocalData
-                        Pos.Ssc.GodTossing.LocalData.Logic
-                        Pos.Ssc.GodTossing.LocalData.Types
-                        Pos.Ssc.GodTossing.Richmen
-                        Pos.Ssc.GodTossing.SecretStorage
-                        Pos.Ssc.GodTossing.Seed
-                        Pos.Ssc.GodTossing.Shares
-                        Pos.Ssc.GodTossing.Toss
-                        Pos.Ssc.GodTossing.Toss.Base
-                        Pos.Ssc.GodTossing.Toss.Class
-                        Pos.Ssc.GodTossing.Toss.Failure
-                        Pos.Ssc.GodTossing.Toss.Logic
-                        Pos.Ssc.GodTossing.Toss.Pure
-                        Pos.Ssc.GodTossing.Toss.Trans
-                        Pos.Ssc.GodTossing.Toss.Types
-                        Pos.Ssc.GodTossing.Type
-                        Pos.Ssc.GodTossing.Types
-                        Pos.Ssc.GodTossing.Types.Message
-                        Pos.Ssc.GodTossing.Types.Types
-                        Pos.Ssc.GodTossing.VssCertData
                         Pos.Ssc.GodTossing.Workers
 
                         -- Statistics
@@ -304,9 +301,6 @@ library
                         Pos.Txp.Toil.Utxo.Util
                         Pos.Txp.Worker
 
-                        -- Types
-                        Pos.Types.SharedSeed
-
                         -- Workers
                         Pos.Worker.Stats
 
@@ -322,26 +316,9 @@ library
                         Pos.Update.Lrc
                         Pos.Update.Network
                         Pos.Update.Network.Listeners
-                        Pos.Update.Network.Types
                         Pos.Update.Poll
-                        Pos.Update.Poll.Class
                         Pos.Update.Poll.DBPoll
-                        Pos.Update.Poll.Failure
-                        Pos.Update.Poll.Logic
-                        Pos.Update.Poll.Logic.Apply
-                        Pos.Update.Poll.Logic.Base
-                        Pos.Update.Poll.Logic.Normalize
-                        Pos.Update.Poll.Logic.Rollback
-                        Pos.Update.Poll.Logic.Softfork
-                        Pos.Update.Poll.Logic.Version
-                        Pos.Update.Poll.Pure
-                        Pos.Update.Poll.RollTrans
-                        Pos.Update.Poll.Trans
                         Pos.Update.Worker
-
-                        -- Utilities/helpers
-                        Pos.Util.Arbitrary
-                        Pos.Util.Undefined
 
   -- Explorer (TODO: move into cardano-explorer)
   other-modules:        Pos.Binary.Explorer
@@ -360,7 +337,6 @@ library
     other-modules:      Pos.Aeson.Crypto
                         Pos.Aeson.Types
                         Pos.Web.Api
-                        Pos.Web.Doc
                         Pos.Web.Server
                         Pos.Web.Types
   if flag(with-wallet)
@@ -371,31 +347,35 @@ library
                         Pos.Wallet.KeyStorage
                         Pos.Wallet.State
                         Pos.Wallet.State.Acidic
-                        Pos.Wallet.State.Holder
-                        Pos.Wallet.State.Limits
+                        Pos.Wallet.State.Core
                         Pos.Wallet.State.State
                         Pos.Wallet.State.Storage
                         Pos.Wallet.State.Storage.Block
                         Pos.Wallet.State.Storage.Tx
-                        Pos.Wallet.Update
                         Pos.Wallet.SscType
   if (flag(with-wallet) && flag(with-web))
     other-modules:      Pos.Aeson.ClientTypes
-                        Pos.Wallet.Web.ClientTypes
+                        Pos.Wallet.Web.Account
                         Pos.Wallet.Web.Api
-                        Pos.Wallet.Web.Doc
+                        Pos.Wallet.Web.BListener
+                        Pos.Wallet.Web.ClientTypes
                         Pos.Wallet.Web.Error
                         Pos.Wallet.Web.Server
                         Pos.Wallet.Web.Server.Methods
                         Pos.Wallet.Web.Server.Full
+                        Pos.Wallet.Web.Server.Full.Common
+                        Pos.Wallet.Web.Server.Full.K
+                        Pos.Wallet.Web.Server.Full.S
                         Pos.Wallet.Web.Server.Lite
                         Pos.Wallet.Web.Server.Sockets
                         Pos.Wallet.Web.State
                         Pos.Wallet.Web.State.Acidic
                         Pos.Wallet.Web.State.Holder
-                        Pos.Wallet.Web.State.Limits
+                        Pos.Wallet.Web.State.Core
                         Pos.Wallet.Web.State.State
                         Pos.Wallet.Web.State.Storage
+                        Pos.Wallet.Web.Tracking
+                        Pos.Wallet.Web.Util
 
   build-depends:        IfElse
                       , QuickCheck
@@ -414,15 +394,17 @@ library
                       , cardano-report-server >= 0.1.1
                       , cardano-sl-core
                       , cardano-sl-db
+                      , cardano-sl-godtossing
                       , cardano-sl-infra
                       , cardano-sl-lrc
+                      , cardano-sl-ssc
                       , cardano-sl-update
                       , cereal
                       , concurrent-extra
                       , conduit >= 1.2.8
                       , containers
-                      , cryptonite >= 0.19 && <= 0.22
-                      , cryptonite-openssl >= 0.5
+                      , cryptonite >= 0.23 && <= 0.23
+                      , cryptonite-openssl >= 0.6
                       , data-default
                       , deepseq
                       , derive
@@ -431,7 +413,9 @@ library
                       , directory
                       , dlist
                       , ed25519
-                      , ether
+                      , ekg
+                      , ekg-core
+                      , ether >= 0.5
                       , exceptions
                       , file-embed >= 0.0.10
                       , filelock >= 0.1.0.1
@@ -498,7 +482,6 @@ library
     build-depends:      http-types
                       , servant >= 0.8.1
                       , servant-multipart >= 0.10
-                      , servant-docs >= 0.8.1
                       , servant-server >= 0.8.1
                       , wai
                       , wai-extra
@@ -540,8 +523,6 @@ library
   build-tools: cpphs >= 1.19
   ghc-options: -pgmP cpphs -optP --cpp
 
-  if flag(asserts)
-    cpp-options: -DASSERTS_ON
   if flag(with-web)
     cpp-options: -DWITH_WEB
   if flag(with-wallet)
@@ -553,6 +534,8 @@ executable cardano-node
   hs-source-dirs:      src/node
   main-is:             Main.hs
   other-modules:       NodeOptions
+                     , Params
+                     , Secrets
   build-depends:       base
                      , binary
                      , bytestring
@@ -561,18 +544,22 @@ executable cardano-node
                      , cardano-sl-lrc
                      , cardano-sl-update
                      , cardano-sl
+                     , containers
                      , data-default
                      , directory
+                     , ether
                      , filepath
                      , formatting
                      , lens
                      , log-warper
+                     , mtl
                      , network-transport
                      , node-sketch
                      , network-transport-tcp
                      , optparse-simple
                      , parsec
                      , serokell-util >= 0.1.3.4
+                     , stm-containers
                      , time
                      , time-units
                      , universum >= 0.1.11
@@ -621,7 +608,8 @@ executable cardano-analyzer
   hs-source-dirs:      src/analyzer
   main-is:             Main.hs
   other-modules:       AnalyzerOptions
-  build-depends:       base
+  if !flag(for-installer)
+   build-depends:      base
                      , aeson
                      , attoparsec
                      , bytestring
@@ -672,12 +660,16 @@ executable cardano-analyzer
   build-tools: cpphs >= 1.19
   ghc-options: -pgmP cpphs -optP --cpp
 
+  if flag(for-installer)
+    buildable: False
+
 executable cardano-wallet
   hs-source-dirs:      src/wallet
   main-is:             Main.hs
   other-modules:       WalletOptions
                        Command
-  build-depends:       QuickCheck
+  if !flag(for-installer)
+   build-depends:      QuickCheck
                      , base
                      , base58-bytestring
                      , binary
@@ -751,6 +743,9 @@ executable cardano-wallet
   if !os(windows)
     build-depends:     unix
 
+  if flag(for-installer)
+    buildable: False
+
 executable cardano-wallet-hs2purs
   hs-source-dirs:      src/wallet-purescript
   main-is:             Main.hs
@@ -811,7 +806,8 @@ executable cardano-smart-generator
                        TxGeneration
                        TxAnalysis
                        Util
-  build-depends:       QuickCheck
+  if !flag(for-installer)
+   build-depends:      QuickCheck
                      , base
                      , aeson
                      , array
@@ -884,10 +880,14 @@ executable cardano-smart-generator
   else
     buildable:         False
 
+  if flag(for-installer)
+    buildable: False
+
 executable cardano-dht-keygen
   hs-source-dirs:      src/dht-keygen
   main-is:             Main.hs
-  build-depends:       QuickCheck
+  if !flag(for-installer)
+   build-depends:      QuickCheck
                      , base
                      , aeson
                      , array
@@ -948,114 +948,21 @@ executable cardano-dht-keygen
   build-tools: cpphs >= 1.19
   ghc-options: -pgmP cpphs -optP --cpp
 
-executable cardano-web-docs
-  hs-source-dirs:      src/web-docs
-  main-is:             Main.hs
-  build-depends:       base
-                     , cardano-sl-core
-                     , cardano-sl
-                     , universum >= 0.1.11
-  default-language:    Haskell2010
-  ghc-options:         -threaded -rtsopts
-                       -Wall
-                       -fno-warn-orphans
-                       -with-rtsopts=-N
-                       -O2
-
-  -- linker speed ups for linux
-  if os(linux)
-    ghc-options:       -optl-fuse-ld=gold
-    ld-options:        -fuse-ld=gold
-
-  default-extensions:   DeriveDataTypeable
-                        DeriveGeneric
-                        GeneralizedNewtypeDeriving
-                        StandaloneDeriving
-                        FlexibleContexts
-                        FlexibleInstances
-                        MultiParamTypeClasses
-                        FunctionalDependencies
-                        DefaultSignatures
-                        NoImplicitPrelude
-                        OverloadedStrings
-                        RecordWildCards
-                        TypeApplications
-                        TupleSections
-                        ViewPatterns
-                        LambdaCase
-                        MultiWayIf
-                        ConstraintKinds
-                        UndecidableInstances
-                        BangPatterns
-
-  build-tools: cpphs >= 1.19
-  ghc-options: -pgmP cpphs -optP --cpp
-
-  if flag(with-web)
-    buildable:         True
-  else
-    buildable:         False
-
-executable cardano-wallet-web-docs
-  hs-source-dirs:      src/wallet-web-docs
-  main-is:             Main.hs
-  build-depends:       base
-                     , cardano-sl-core
-                     , cardano-sl
-                     , universum >= 0.1.11
-                     , unordered-containers
-                     , vector
-  default-language:    Haskell2010
-  ghc-options:         -threaded -rtsopts
-                       -Wall
-                       -fno-warn-orphans
-                       -with-rtsopts=-N
-                       -O2
-
-  -- linker speed up for linux
-  if os(linux)
-    ghc-options:       -optl-fuse-ld=gold
-    ld-options:        -fuse-ld=gold
-
-  default-extensions:   DeriveDataTypeable
-                        DeriveGeneric
-                        GeneralizedNewtypeDeriving
-                        StandaloneDeriving
-                        FlexibleContexts
-                        FlexibleInstances
-                        MultiParamTypeClasses
-                        FunctionalDependencies
-                        DefaultSignatures
-                        NoImplicitPrelude
-                        OverloadedStrings
-                        RecordWildCards
-                        TypeApplications
-                        TupleSections
-                        ViewPatterns
-                        LambdaCase
-                        MultiWayIf
-                        ConstraintKinds
-                        UndecidableInstances
-                        BangPatterns
-
-  build-tools: cpphs >= 1.19
-  ghc-options: -pgmP cpphs -optP --cpp
-
-  if flag(with-web) && flag(with-wallet)
-    buildable:         True
-  else
-    buildable:         False
+  if flag(for-installer)
+    buildable: False
 
 executable cardano-swagger
   hs-source-dirs:      src/wallet-web-api-swagger
   main-is:             Main.hs
   other-modules:       Description
-  build-depends:       aeson
+  if !flag(for-installer)
+   build-depends:      aeson
                      , base
                      , bytestring
                      , cardano-sl
                      , lens
                      , swagger2
+                     , servant
                      , servant-server
                      , servant-multipart
                      , servant-swagger
@@ -1080,10 +987,14 @@ executable cardano-swagger
   build-tools: cpphs >= 1.19
   ghc-options: -pgmP cpphs -optP --cpp
 
+  if flag(for-installer)
+    buildable: False
+
 executable cardano-checks
   hs-source-dirs:      src/checks
   main-is:             Main.hs
-  build-depends:       base
+  if !flag(for-installer)
+   build-depends:      base
                      , containers
                      , foldl
                      , text
@@ -1100,6 +1011,9 @@ executable cardano-checks
 
   default-extensions:  OverloadedStrings
                        BangPatterns
+
+  if flag(for-installer)
+    buildable: False
 
 executable cardano-genupdate
   hs-source-dirs:      src/genupdate
@@ -1133,7 +1047,8 @@ executable cardano-keygen
   other-modules:       KeygenOptions
                      , Avvm
                      , Testnet
-  build-depends:       QuickCheck >= 2.9
+  if !flag(for-installer)
+   build-depends:      QuickCheck >= 2.9
                      , Glob
                      , base
                      , aeson
@@ -1184,6 +1099,9 @@ executable cardano-keygen
                         ConstraintKinds
                         UndecidableInstances
                         BangPatterns
+
+  if flag(for-installer)
+    buildable: False
 
 executable cardano-launcher
   hs-source-dirs:      src/launcher
@@ -1275,6 +1193,7 @@ test-suite cardano-test
                        Test.Pos.Arbitrary.Infra.Communication
                        Test.Pos.Arbitrary.Infra.DHT
                        Test.Pos.BinarySpec
+                       Test.Pos.Block.LogicSpec
                        Test.Pos.Block.Identity.BinarySpec
                        Test.Pos.Block.Identity.SafeCopySpec
                        Test.Pos.Communication.Identity.BinarySpec
@@ -1305,6 +1224,8 @@ test-suite cardano-test
                        Test.Pos.Update.MemStateSpec
                        Test.Pos.Update.PollSpec
                        Test.Pos.Util
+                       Test.Pos.Util.LimitsSpec
+                       Test.Pos.Util.ModifierSpec
                        Test.Pos.UtilSpec
   type:                exitcode-stdio-1.0
   build-depends:       QuickCheck
@@ -1312,7 +1233,7 @@ test-suite cardano-test
                      , binary
                      , bytestring
                      , cardano-sl-core
-                     , cardano-sl-infra >= 0.1
+                     , cardano-sl-infra
                      , cardano-sl-update
                      , cardano-sl
                      , cereal
@@ -1336,6 +1257,7 @@ test-suite cardano-test
                      , regex-tdfa-text
                      , safecopy
                      , serokell-util >= 0.1.3.4
+                     , tagged
                      , time-units
                      , universum >= 0.1.11
                      , unordered-containers
