@@ -188,7 +188,17 @@ checksBadOpeningsPayload
     } deriving (Show, Eq)
 
 instance Arbitrary GoodSharesPayload where
-    arbitrary = do-}
+    arbitrary = do
+        _gsOpenings <- arbitrary
+        _gsCommitments <- arbitrary
+
+        (epoch, richmen, m) <-
+            arbitrary :: Gen (EpochIndex, RichmenStake, MultiRichmenStake)
+        let crucialE = crucialS
+
+        -- None of the keys in the 'SharesMap' must be in the global state's share map
+
+        -- For every 'StakeholderId' and its corresponding 'InnerSharesMap',-}
 
 newtype GoodCertsPayload = GoodCertsPayload
     { getGoodCerts :: (EpochIndex, GtGlobalState, VssCertificatesMap, MultiRichmenStake)
